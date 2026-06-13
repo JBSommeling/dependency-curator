@@ -339,5 +339,9 @@ type APIError struct {
 }
 
 func (e *APIError) Error() string {
-	return fmt.Sprintf("GitHub API error (status %d): %s", e.StatusCode, e.Body)
+	body := e.Body
+	if len(body) > 200 {
+		body = body[:200] + "...(truncated)"
+	}
+	return fmt.Sprintf("GitHub API error (status %d): %s", e.StatusCode, body)
 }
