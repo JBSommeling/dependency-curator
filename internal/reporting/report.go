@@ -51,7 +51,7 @@ func GeneratePRBody(deps []dependency.Dependency, changelogs map[string]*changel
 	report := BuildReport(deps, changelogs)
 	var b strings.Builder
 
-	b.WriteString("# Dependency Guardian Report\n\n")
+	b.WriteString("# Dependency Curator Report\n\n")
 
 	// Executive Summary
 	b.WriteString("## Executive Summary\n\n")
@@ -167,7 +167,7 @@ func GenerateSummary(deps []dependency.Dependency, patchesApplied int) string {
 	report := BuildReport(deps, nil)
 	var b strings.Builder
 
-	b.WriteString("## Dependency Guardian Summary\n\n")
+	b.WriteString("## Dependency Curator Summary\n\n")
 	if patchesApplied > 0 {
 		b.WriteString(fmt.Sprintf("- **%d** patch updates applied\n", patchesApplied))
 	}

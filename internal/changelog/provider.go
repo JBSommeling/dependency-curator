@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -32,14 +33,14 @@ type npmPackageInfo struct {
 	} `json:"repository"`
 }
 
-func (p *NpmRegistryProvider) FetchChangelog(pkg string, fromVer, toVer string) (*ChangelogInfo, error) {
+func (p *NpmRegistryProvider) FetchChangelog(ctx context.Context, pkg string, fromVer, toVer string) (*ChangelogInfo, error) {
 	info := &ChangelogInfo{
 		PackageName: pkg,
 		FromVersion: fromVer,
 		ToVersion:   toVer,
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
 	url := fmt.Sprintf("%s/%s", p.registryURL, pkg)
@@ -61,7 +62,8 @@ func (p *NpmRegistryProvider) FetchChangelog(pkg string, fromVer, toVer string) 
 	}
 
 	var pkgInfo npmPackageInfo
-	if err := json.NewDecoder(resp.Body).Decode(&pkgInfo); err != nil {
+	limitedBody := io.LimitReader(resp.Body, 5<<20) // 5 MB limit
+	if err := json.NewDecoder(limitedBody).Decode(&pkgInfo); err != nil {
 		return info, nil // Can't parse, treat as unavailable
 	}
 

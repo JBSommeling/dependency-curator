@@ -76,7 +76,7 @@ func Load() (*Config, error) {
 }
 
 func (c *Config) UpdateBranch() string {
-	return "dependency-guardian/" + c.ScheduleLabel + "-updates"
+	return "dependency-curator/" + c.ScheduleLabel + "-updates"
 }
 
 func getEnv(key, fallback string) string {

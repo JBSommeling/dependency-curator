@@ -1,6 +1,7 @@
 package changelog
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -22,7 +23,7 @@ func TestFetchChangelog_GitHubHTTPS(t *testing.T) {
 	})
 	defer srv.Close()
 
-	info, err := p.FetchChangelog("mypackage", "1.0.0", "2.0.0")
+	info, err := p.FetchChangelog(context.Background(), "mypackage", "1.0.0", "2.0.0")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -45,7 +46,7 @@ func TestFetchChangelog_GitPlusHTTPS(t *testing.T) {
 	})
 	defer srv.Close()
 
-	info, err := p.FetchChangelog("mypackage", "1.0.0", "2.0.0")
+	info, err := p.FetchChangelog(context.Background(), "mypackage", "1.0.0", "2.0.0")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -68,7 +69,7 @@ func TestFetchChangelog_GitAtFormat(t *testing.T) {
 	})
 	defer srv.Close()
 
-	info, err := p.FetchChangelog("mypackage", "1.0.0", "2.0.0")
+	info, err := p.FetchChangelog(context.Background(), "mypackage", "1.0.0", "2.0.0")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -91,7 +92,7 @@ func TestFetchChangelog_GitHubShorthand(t *testing.T) {
 	})
 	defer srv.Close()
 
-	info, err := p.FetchChangelog("mypackage", "1.0.0", "2.0.0")
+	info, err := p.FetchChangelog(context.Background(), "mypackage", "1.0.0", "2.0.0")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -114,7 +115,7 @@ func TestFetchChangelog_NoRepository(t *testing.T) {
 	})
 	defer srv.Close()
 
-	info, err := p.FetchChangelog("mypackage", "1.0.0", "2.0.0")
+	info, err := p.FetchChangelog(context.Background(), "mypackage", "1.0.0", "2.0.0")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -131,7 +132,7 @@ func TestFetchChangelog_NonGitHubRepo(t *testing.T) {
 	})
 	defer srv.Close()
 
-	info, err := p.FetchChangelog("mypackage", "1.0.0", "2.0.0")
+	info, err := p.FetchChangelog(context.Background(), "mypackage", "1.0.0", "2.0.0")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -146,7 +147,7 @@ func TestFetchChangelog_404(t *testing.T) {
 	})
 	defer srv.Close()
 
-	info, err := p.FetchChangelog("nonexistent-pkg", "1.0.0", "2.0.0")
+	info, err := p.FetchChangelog(context.Background(), "nonexistent-pkg", "1.0.0", "2.0.0")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -163,7 +164,7 @@ func TestFetchChangelog_InvalidJSON(t *testing.T) {
 	})
 	defer srv.Close()
 
-	info, err := p.FetchChangelog("mypackage", "1.0.0", "2.0.0")
+	info, err := p.FetchChangelog(context.Background(), "mypackage", "1.0.0", "2.0.0")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -178,7 +179,7 @@ func TestFetchChangelog_NetworkError(t *testing.T) {
 	})
 	srv.Close() // Close immediately so the request fails
 
-	_, err := p.FetchChangelog("mypackage", "1.0.0", "2.0.0")
+	_, err := p.FetchChangelog(context.Background(), "mypackage", "1.0.0", "2.0.0")
 	if err == nil {
 		t.Error("expected error on network failure, got nil")
 	}

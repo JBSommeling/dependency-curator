@@ -11,7 +11,7 @@ import (
 func TestGeneratePRBody_Empty(t *testing.T) {
 	body := GeneratePRBody([]dependency.Dependency{}, nil)
 
-	if !strings.Contains(body, "# Dependency Guardian Report") {
+	if !strings.Contains(body, "# Dependency Curator Report") {
 		t.Error("expected report header")
 	}
 	if !strings.Contains(body, "## Executive Summary") {
@@ -213,7 +213,7 @@ func TestGenerateSummary_PatchesApplied(t *testing.T) {
 	}
 	summary := GenerateSummary(deps, 2)
 
-	if !strings.Contains(summary, "## Dependency Guardian Summary") {
+	if !strings.Contains(summary, "## Dependency Curator Summary") {
 		t.Error("expected summary header")
 	}
 	if !strings.Contains(summary, "**2** patch updates applied") {

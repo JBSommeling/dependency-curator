@@ -15,8 +15,12 @@ func (m *mockRunner) Run(ctx context.Context, dir string, name string, args ...s
 	return m.output, m.err
 }
 
+func (m *mockRunner) RunAllowExit1(ctx context.Context, dir string, name string, args ...string) ([]byte, error) {
+	return m.Run(ctx, dir, name, args...)
+}
+
 func TestListAvailable_NoUpdates(t *testing.T) {
-	s := New(&mockRunner{output: []byte(`{}`)})
+	s := New(&mockRunner{output: []byte(`{}`)}, true)
 	updates, err := s.ListAvailable(context.Background(), "/tmp/project")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -27,7 +31,7 @@ func TestListAvailable_NoUpdates(t *testing.T) {
 }
 
 func TestListAvailable_EmptyOutput(t *testing.T) {
-	s := New(&mockRunner{output: []byte(``)})
+	s := New(&mockRunner{output: []byte(``)}, true)
 	updates, err := s.ListAvailable(context.Background(), "/tmp/project")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -39,7 +43,7 @@ func TestListAvailable_EmptyOutput(t *testing.T) {
 
 func TestListAvailable_PatchUpdate(t *testing.T) {
 	json := `{"axios": {"current": "1.6.0", "wanted": "1.6.8", "latest": "1.6.8", "location": "node_modules/axios"}}`
-	s := New(&mockRunner{output: []byte(json)})
+	s := New(&mockRunner{output: []byte(json)}, true)
 	updates, err := s.ListAvailable(context.Background(), "/tmp/project")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -57,7 +61,7 @@ func TestListAvailable_PatchUpdate(t *testing.T) {
 
 func TestListAvailable_MinorUpdate(t *testing.T) {
 	json := `{"express": {"current": "4.17.0", "wanted": "4.17.1", "latest": "4.18.2", "location": "node_modules/express"}}`
-	s := New(&mockRunner{output: []byte(json)})
+	s := New(&mockRunner{output: []byte(json)}, true)
 	updates, err := s.ListAvailable(context.Background(), "/tmp/project")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -72,7 +76,7 @@ func TestListAvailable_MinorUpdate(t *testing.T) {
 
 func TestListAvailable_MajorUpdate(t *testing.T) {
 	json := `{"webpack": {"current": "4.46.0", "wanted": "4.46.0", "latest": "5.89.0", "location": "node_modules/webpack"}}`
-	s := New(&mockRunner{output: []byte(json)})
+	s := New(&mockRunner{output: []byte(json)}, true)
 	updates, err := s.ListAvailable(context.Background(), "/tmp/project")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -91,7 +95,7 @@ func TestListAvailable_MixedUpdates(t *testing.T) {
 		"express": {"current": "4.17.0", "wanted": "4.17.1", "latest": "4.18.2", "location": "node_modules/express"},
 		"webpack": {"current": "4.46.0", "wanted": "4.46.0", "latest": "5.89.0", "location": "node_modules/webpack"}
 	}`
-	s := New(&mockRunner{output: []byte(json)})
+	s := New(&mockRunner{output: []byte(json)}, true)
 	updates, err := s.ListAvailable(context.Background(), "/tmp/project")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -117,7 +121,7 @@ func TestListAvailable_MixedUpdates(t *testing.T) {
 
 func TestListAvailable_CurrentEqualsLatest(t *testing.T) {
 	json := `{"lodash": {"current": "4.17.21", "wanted": "4.17.21", "latest": "4.17.21", "location": "node_modules/lodash"}}`
-	s := New(&mockRunner{output: []byte(json)})
+	s := New(&mockRunner{output: []byte(json)}, true)
 	updates, err := s.ListAvailable(context.Background(), "/tmp/project")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -132,7 +136,7 @@ func TestListAvailable_MissingCurrentOrLatest(t *testing.T) {
 		"pkg-no-current": {"current": "", "wanted": "1.0.0", "latest": "1.0.0", "location": "node_modules/pkg-no-current"},
 		"pkg-no-latest":  {"current": "1.0.0", "wanted": "1.0.0", "latest": "", "location": "node_modules/pkg-no-latest"}
 	}`
-	s := New(&mockRunner{output: []byte(json)})
+	s := New(&mockRunner{output: []byte(json)}, true)
 	updates, err := s.ListAvailable(context.Background(), "/tmp/project")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -143,7 +147,7 @@ func TestListAvailable_MissingCurrentOrLatest(t *testing.T) {
 }
 
 func TestListAvailable_RunnerError(t *testing.T) {
-	s := New(&mockRunner{err: errors.New("exec failed")})
+	s := New(&mockRunner{err: errors.New("exec failed")}, true)
 	_, err := s.ListAvailable(context.Background(), "/tmp/project")
 	if err == nil {
 		t.Fatal("expected error, got nil")
@@ -151,7 +155,7 @@ func TestListAvailable_RunnerError(t *testing.T) {
 }
 
 func TestListAvailable_InvalidJSON(t *testing.T) {
-	s := New(&mockRunner{output: []byte(`not valid json`)})
+	s := New(&mockRunner{output: []byte(`not valid json`)}, true)
 	_, err := s.ListAvailable(context.Background(), "/tmp/project")
 	if err == nil {
 		t.Fatal("expected error for invalid JSON, got nil")

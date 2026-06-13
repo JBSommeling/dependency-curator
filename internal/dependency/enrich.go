@@ -1,17 +1,12 @@
 package dependency
 
-import (
-	"github.com/JBSommeling/dependency-curator/internal/scanner"
-	"github.com/JBSommeling/dependency-curator/internal/security"
-)
-
-func Enrich(deps []Dependency, updates []scanner.Update, advisories []security.Advisory) []Dependency {
-	updateMap := make(map[string]scanner.Update, len(updates))
+func Enrich(deps []Dependency, updates []UpdateInfo, advisories []AdvisoryInfo) []Dependency {
+	updateMap := make(map[string]UpdateInfo, len(updates))
 	for _, u := range updates {
 		updateMap[u.Name] = u
 	}
 
-	advisoryMap := make(map[string][]security.Advisory)
+	advisoryMap := make(map[string][]AdvisoryInfo)
 	for _, a := range advisories {
 		advisoryMap[a.Package] = append(advisoryMap[a.Package], a)
 	}

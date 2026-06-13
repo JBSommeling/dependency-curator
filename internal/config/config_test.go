@@ -210,9 +210,9 @@ func TestUpdateBranch(t *testing.T) {
 		scheduleLabel string
 		want          string
 	}{
-		{"weekly", "dependency-guardian/weekly-updates"},
-		{"monthly", "dependency-guardian/monthly-updates"},
-		{"daily", "dependency-guardian/daily-updates"},
+		{"weekly", "dependency-curator/weekly-updates"},
+		{"monthly", "dependency-curator/monthly-updates"},
+		{"daily", "dependency-curator/daily-updates"},
 	}
 
 	for _, tc := range cases {

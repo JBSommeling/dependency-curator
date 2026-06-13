@@ -22,3 +22,21 @@ type Provider interface {
 	Discover(projectDir string) ([]Dependency, error)
 	Name() string
 }
+
+type UpdateInfo struct {
+	Name       string
+	Current    string
+	Wanted     string
+	Latest     string
+	UpdateType string
+}
+
+type AdvisoryInfo struct {
+	ID               string
+	Package          string
+	Severity         string
+	Title            string
+	AffectedVersions string
+	FixedVersion     string
+	URL              string
+}

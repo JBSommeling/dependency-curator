@@ -6,6 +6,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/JBSommeling/dependency-curator/internal/changelog"
@@ -24,6 +25,7 @@ type ghClientInterface interface {
 	GetRef(ctx context.Context, owner, repo, ref string) (string, error)
 	BranchExists(ctx context.Context, owner, repo, branch string) (bool, error)
 	CreateBranch(ctx context.Context, owner, repo, branch, fromSHA string) error
+	UpdateRef(ctx context.Context, owner, repo, ref, sha string) error
 	CommitFiles(ctx context.Context, owner, repo, branch, message string, files map[string][]byte) (string, error)
 	FindOpenPR(ctx context.Context, owner, repo, head, base string) (int, bool, error)
 	CreatePR(ctx context.Context, owner, repo string, pr gh.PRRequest) (string, int, error)
@@ -81,15 +83,6 @@ func runWithDeps(cfg *config.Config, d *deps) error {
 		return fmt.Errorf("discovering dependencies: %w", err)
 	}
 
-	if !cfg.IncludeDev {
-		var filtered []dependency.Dependency
-		for _, dep := range deps {
-			if !dep.IsDev {
-				filtered = append(filtered, dep)
-			}
-		}
-		deps = filtered
-	}
 	log.Printf("discovered %d dependencies", len(deps))
 
 	if len(deps) == 0 {
@@ -101,7 +94,7 @@ func runWithDeps(cfg *config.Config, d *deps) error {
 	}
 
 	// Step 3: Check for available updates
-	sc := scanner.New(d.runner)
+	sc := scanner.New(d.runner, cfg.IncludeDev)
 	updates, err := sc.ListAvailable(ctx, cfg.ProjectDir)
 	if err != nil {
 		return fmt.Errorf("listing available updates: %w", err)
@@ -109,7 +102,7 @@ func runWithDeps(cfg *config.Config, d *deps) error {
 	log.Printf("found %d available updates", len(updates))
 
 	// Step 4: Scan vulnerabilities
-	secScanner := security.NewNpmAuditScanner(d.runner)
+	secScanner := security.NewNpmAuditScanner(d.runner, cfg.IncludeDev)
 	advisories, err := secScanner.Scan(ctx, cfg.ProjectDir)
 	if err != nil {
 		log.Printf("warning: vulnerability scan failed: %v", err)
@@ -118,7 +111,33 @@ func runWithDeps(cfg *config.Config, d *deps) error {
 	log.Printf("found %d advisories", len(advisories))
 
 	// Step 5: Enrich dependencies
-	enriched := dependency.Enrich(deps, updates, advisories)
+	// Convert scanner updates to dependency.UpdateInfo
+	var updateInfos []dependency.UpdateInfo
+	for _, u := range updates {
+		updateInfos = append(updateInfos, dependency.UpdateInfo{
+			Name:       u.Name,
+			Current:    u.Current,
+			Wanted:     u.Wanted,
+			Latest:     u.Latest,
+			UpdateType: u.UpdateType,
+		})
+	}
+
+	// Convert security advisories to dependency.AdvisoryInfo
+	var advisoryInfos []dependency.AdvisoryInfo
+	for _, a := range advisories {
+		advisoryInfos = append(advisoryInfos, dependency.AdvisoryInfo{
+			ID:               a.ID,
+			Package:          a.Package,
+			Severity:         a.Severity,
+			Title:            a.Title,
+			AffectedVersions: a.AffectedVersions,
+			FixedVersion:     a.FixedVersion,
+			URL:              a.URL,
+		})
+	}
+
+	enriched := dependency.Enrich(deps, updateInfos, advisoryInfos)
 
 	// Classify
 	var patches, minorMajor []dependency.Dependency
@@ -137,18 +156,21 @@ func runWithDeps(cfg *config.Config, d *deps) error {
 	// Step 6: Ensure update branch exists
 	needsBranch := (cfg.AutoPatch && len(patches) > 0) || (cfg.CreatePR && len(minorMajor) > 0)
 	if needsBranch {
-		exists, err := d.ghClient.BranchExists(ctx, cfg.Owner, cfg.Repo, updateBranch)
+		baseSHA, err := d.ghClient.GetRef(ctx, cfg.Owner, cfg.Repo, "heads/"+baseBranch)
 		if err != nil {
-			return fmt.Errorf("checking branch: %w", err)
+			return fmt.Errorf("getting base ref: %w", err)
 		}
-		if !exists {
-			baseSHA, err := d.ghClient.GetRef(ctx, cfg.Owner, cfg.Repo, "heads/"+baseBranch)
-			if err != nil {
-				return fmt.Errorf("getting base ref: %w", err)
-			}
-			if err := d.ghClient.CreateBranch(ctx, cfg.Owner, cfg.Repo, updateBranch, baseSHA); err != nil {
+		if err := d.ghClient.CreateBranch(ctx, cfg.Owner, cfg.Repo, updateBranch, baseSHA); err != nil {
+			exists, existsErr := d.ghClient.BranchExists(ctx, cfg.Owner, cfg.Repo, updateBranch)
+			if existsErr != nil || !exists {
 				return fmt.Errorf("creating update branch: %w", err)
 			}
+			// Fast-forward existing branch to current base
+			if err := d.ghClient.UpdateRef(ctx, cfg.Owner, cfg.Repo, "heads/"+updateBranch, baseSHA); err != nil {
+				return fmt.Errorf("updating branch ref: %w", err)
+			}
+			log.Printf("updated branch %s to %s", updateBranch, baseSHA[:7])
+		} else {
 			log.Printf("created branch %s", updateBranch)
 		}
 	}
@@ -157,30 +179,30 @@ func runWithDeps(cfg *config.Config, d *deps) error {
 	if cfg.AutoPatch && len(patches) > 0 {
 		log.Printf("applying %d patch updates", len(patches))
 		upd := updater.New(d.runner)
-		applied, err := upd.ApplyPatches(ctx, cfg.ProjectDir, enriched)
-		if err != nil {
-			log.Printf("warning: some patches failed: %v", err)
-		}
+		// Note: npm install runs against the local checkout which should match baseSHA for schedule triggers
+		applied, applyErr := upd.ApplyPatches(ctx, cfg.ProjectDir, enriched)
 		patchesApplied = len(applied)
-
-		if patchesApplied > 0 {
+		if applyErr != nil {
+			log.Printf("warning: some patches failed: %v", applyErr)
+			// Don't commit potentially inconsistent state
+			patchesApplied = 0
+		} else if patchesApplied > 0 {
 			// Read updated files and commit via API
 			files := make(map[string][]byte)
 			for _, fname := range []string{"package.json", "package-lock.json"} {
-				data, err := os.ReadFile(fmt.Sprintf("%s/%s", cfg.ProjectDir, fname))
+				path := filepath.Join(cfg.ProjectDir, fname)
+				data, err := os.ReadFile(path)
 				if err != nil {
-					continue
+					return fmt.Errorf("reading %s after patch updates: %w", fname, err)
 				}
 				files[fname] = data
 			}
-			if len(files) > 0 {
-				_, err := d.ghClient.CommitFiles(ctx, cfg.Owner, cfg.Repo, updateBranch,
-					"chore(deps): apply weekly patch updates", files)
-				if err != nil {
-					return fmt.Errorf("committing patch updates: %w", err)
-				}
-				log.Printf("committed %d patch updates", patchesApplied)
+			_, err := d.ghClient.CommitFiles(ctx, cfg.Owner, cfg.Repo, updateBranch,
+				"chore(deps): apply weekly patch updates", files)
+			if err != nil {
+				return fmt.Errorf("committing patch updates: %w", err)
 			}
+			log.Printf("committed %d patch updates", patchesApplied)
 		}
 	}
 
@@ -192,7 +214,7 @@ func runWithDeps(cfg *config.Config, d *deps) error {
 		changelogs := make(map[string]*changelog.ChangelogInfo)
 		for _, dep := range enriched {
 			if dep.UpdateType == "major" {
-				cl, err := clProvider.FetchChangelog(dep.Name, dep.CurrentVersion, dep.LatestVersion)
+				cl, err := clProvider.FetchChangelog(ctx, dep.Name, dep.CurrentVersion, dep.LatestVersion)
 				if err != nil {
 					log.Printf("warning: changelog fetch failed for %s: %v", dep.Name, err)
 					continue
@@ -260,7 +282,7 @@ func runWithDeps(cfg *config.Config, d *deps) error {
 func setOutput(name, value string) {
 	outputFile := os.Getenv("GITHUB_OUTPUT")
 	if outputFile == "" {
-		fmt.Printf("::set-output name=%s::%s\n", name, value)
+		log.Printf("warning: GITHUB_OUTPUT not set, output %s=%s not written", name, value)
 		return
 	}
 	f, err := os.OpenFile(outputFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
@@ -270,7 +292,7 @@ func setOutput(name, value string) {
 	}
 	defer f.Close()
 	// Use delimiter for multi-line safety
-	delimiter := "EOF_DEPENDENCY_GUARDIAN"
+	delimiter := "EOF_DEPENDENCY_CURATOR"
 	fmt.Fprintf(f, "%s<<%s\n%s\n%s\n", name, delimiter, value, delimiter)
 }
 

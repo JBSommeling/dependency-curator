@@ -2,16 +2,13 @@ package dependency
 
 import (
 	"testing"
-
-	"github.com/JBSommeling/dependency-curator/internal/scanner"
-	"github.com/JBSommeling/dependency-curator/internal/security"
 )
 
 func TestEnrich_UpdateOnly(t *testing.T) {
 	deps := []Dependency{
 		{Name: "lodash", CurrentVersion: "4.0.0"},
 	}
-	updates := []scanner.Update{
+	updates := []UpdateInfo{
 		{Name: "lodash", Current: "4.0.0", Latest: "4.17.21", UpdateType: "patch"},
 	}
 
@@ -35,7 +32,7 @@ func TestEnrich_AdvisoryOnly(t *testing.T) {
 	deps := []Dependency{
 		{Name: "lodash", CurrentVersion: "4.0.0", UpdateType: "none"},
 	}
-	advisories := []security.Advisory{
+	advisories := []AdvisoryInfo{
 		{ID: "1234", Package: "lodash", Severity: "high", Title: "Prototype Pollution", AffectedVersions: "<4.17.21", FixedVersion: "4.17.21", URL: "https://example.com/1234"},
 	}
 
@@ -60,10 +57,10 @@ func TestEnrich_BothUpdateAndAdvisory(t *testing.T) {
 	deps := []Dependency{
 		{Name: "express", CurrentVersion: "4.0.0"},
 	}
-	updates := []scanner.Update{
+	updates := []UpdateInfo{
 		{Name: "express", Current: "4.0.0", Latest: "4.18.0", UpdateType: "minor"},
 	}
-	advisories := []security.Advisory{
+	advisories := []AdvisoryInfo{
 		{ID: "5678", Package: "express", Severity: "moderate", Title: "Open Redirect", AffectedVersions: "<4.18.0", FixedVersion: "4.18.0", URL: "https://example.com/5678"},
 	}
 
@@ -105,7 +102,7 @@ func TestEnrich_MultipleAdvisories(t *testing.T) {
 	deps := []Dependency{
 		{Name: "moment", CurrentVersion: "2.0.0"},
 	}
-	advisories := []security.Advisory{
+	advisories := []AdvisoryInfo{
 		{ID: "A1", Package: "moment", Severity: "high", Title: "ReDoS"},
 		{ID: "A2", Package: "moment", Severity: "moderate", Title: "Path Traversal"},
 	}
@@ -124,7 +121,7 @@ func TestEnrich_UpdateForUnknownDep(t *testing.T) {
 	deps := []Dependency{
 		{Name: "react", CurrentVersion: "18.0.0"},
 	}
-	updates := []scanner.Update{
+	updates := []UpdateInfo{
 		{Name: "lodash", Current: "4.0.0", Latest: "4.17.21", UpdateType: "patch"},
 	}
 
@@ -146,7 +143,7 @@ func TestEnrich_AdvisoryForUnknownDep(t *testing.T) {
 	deps := []Dependency{
 		{Name: "react", CurrentVersion: "18.0.0"},
 	}
-	advisories := []security.Advisory{
+	advisories := []AdvisoryInfo{
 		{ID: "X1", Package: "lodash", Severity: "critical", Title: "Critical Bug"},
 	}
 
@@ -172,7 +169,7 @@ func TestEnrich_PreservesOtherFields(t *testing.T) {
 	deps := []Dependency{
 		{Name: "webpack", CurrentVersion: "5.0.0", IsDev: true, UpdateType: "none"},
 	}
-	updates := []scanner.Update{
+	updates := []UpdateInfo{
 		{Name: "webpack", Current: "5.0.0", Latest: "5.90.0", UpdateType: "minor"},
 	}
 

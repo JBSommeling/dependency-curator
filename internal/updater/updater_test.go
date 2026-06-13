@@ -28,6 +28,10 @@ func (m *mockRunner) Run(ctx context.Context, dir string, name string, args ...s
 	return nil, nil
 }
 
+func (m *mockRunner) RunAllowExit1(ctx context.Context, dir string, name string, args ...string) ([]byte, error) {
+	return m.Run(ctx, dir, name, args...)
+}
+
 func TestApplyPatches_NoPatches(t *testing.T) {
 	runner := &mockRunner{}
 	u := New(runner)
@@ -76,8 +80,8 @@ func TestApplyPatches_SinglePatch(t *testing.T) {
 	if call.name != "npm" {
 		t.Errorf("expected command npm, got %s", call.name)
 	}
-	if len(call.args) != 2 || call.args[0] != "install" || call.args[1] != "lodash@1.0.1" {
-		t.Errorf("expected args [install lodash@1.0.1], got %v", call.args)
+	if len(call.args) != 3 || call.args[0] != "install" || call.args[1] != "--" || call.args[2] != "lodash@1.0.1" {
+		t.Errorf("expected args [install -- lodash@1.0.1], got %v", call.args)
 	}
 }
 
@@ -104,7 +108,7 @@ func TestApplyPatches_MultiplePatches(t *testing.T) {
 	}
 	expectedPkgs := []string{"a@1.0.1", "b@2.0.3", "c@3.0.2"}
 	for i, call := range runner.calls {
-		if len(call.args) < 2 || call.args[1] != expectedPkgs[i] {
+		if len(call.args) < 3 || call.args[2] != expectedPkgs[i] {
 			t.Errorf("call %d: expected pkg %s, got %v", i, expectedPkgs[i], call.args)
 		}
 	}

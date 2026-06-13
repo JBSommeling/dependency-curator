@@ -3,6 +3,7 @@ package github
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -99,8 +100,8 @@ func (c *Client) UpdateRef(ctx context.Context, owner, repo, ref, sha string) er
 func (c *Client) CreateBlob(ctx context.Context, owner, repo string, content []byte) (string, error) {
 	path := fmt.Sprintf("/repos/%s/%s/git/blobs", owner, repo)
 	body := map[string]string{
-		"content":  string(content),
-		"encoding": "utf-8",
+		"content":  base64.StdEncoding.EncodeToString(content),
+		"encoding": "base64",
 	}
 	var result struct {
 		SHA string `json:"sha"`
@@ -311,7 +312,7 @@ func (c *Client) do(req *http.Request, result interface{}) error {
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(resp.Body)
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 10<<20)) // 10 MB limit
 	if err != nil {
 		return fmt.Errorf("reading response: %w", err)
 	}

@@ -1,4 +1,4 @@
-name: 'Dependency Guardian'
+name: 'Dependency Curator'
 description: 'Automatically maintain project dependencies while minimizing pull request noise'
 author: 'JBSommeling'
 

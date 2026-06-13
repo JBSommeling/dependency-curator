@@ -1,4 +1,4 @@
-# Dependency Guardian
+# Dependency Curator
 
 A GitHub Action that automatically maintains project dependencies while minimizing pull request noise.
 
@@ -6,7 +6,7 @@ A GitHub Action that automatically maintains project dependencies while minimizi
 
 Tools like Dependabot and Renovate create dozens of individual PRs for routine dependency updates. This fragments review effort, clutters notifications, and discourages teams from staying current.
 
-**Dependency Guardian takes a different approach:**
+**Dependency Curator takes a different approach:**
 
 - Automatically applies safe patch updates in a single commit
 - Creates one consolidated PR for all minor and major updates
@@ -15,10 +15,10 @@ Tools like Dependabot and Renovate create dozens of individual PRs for routine d
 
 ## Quick Start
 
-Add this workflow to your repository at `.github/workflows/dependency-guardian.yml`:
+Add this workflow to your repository at `.github/workflows/dependency-curator.yml`:
 
 ```yaml
-name: Dependency Guardian
+name: Dependency Curator
 on:
   schedule:
     - cron: "0 6 * * 1"  # Every Monday at 6 AM
@@ -40,7 +40,7 @@ jobs:
 
 ## What It Does
 
-On each run, Dependency Guardian:
+On each run, Dependency Curator:
 
 1. Discovers all dependencies from `package.json`
 2. Checks for available updates via `npm outdated`
@@ -93,7 +93,7 @@ permissions:
 
 ## Architecture
 
-Dependency Guardian is written in Go and runs as a Docker-based GitHub Action. It uses a clean architecture with interfaces designed for ecosystem extensibility.
+Dependency Curator is written in Go and runs as a Docker-based GitHub Action. It uses a clean architecture with interfaces designed for ecosystem extensibility.
 
 ```
 Discover → Scan → Enrich → Update → Report → PR

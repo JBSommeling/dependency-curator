@@ -43,6 +43,9 @@ func (m *mockGHClient) CreateBranch(_ context.Context, _, _, _, _ string) error 
 	m.createBranchCalled = true
 	return nil
 }
+func (m *mockGHClient) UpdateRef(_ context.Context, _, _, _, _ string) error {
+	return nil
+}
 func (m *mockGHClient) CommitFiles(_ context.Context, _, _, _, _ string, _ map[string][]byte) (string, error) {
 	m.commitFilesCalled = true
 	return m.commitSHA, nil
@@ -83,6 +86,10 @@ func (m *mockCmdRunner) Run(_ context.Context, _ string, name string, args ...st
 		return resp.output, resp.err
 	}
 	return []byte("{}"), nil
+}
+
+func (m *mockCmdRunner) RunAllowExit1(ctx context.Context, dir string, name string, args ...string) ([]byte, error) {
+	return m.Run(ctx, dir, name, args...)
 }
 
 // mockHTTPClient satisfies changelog.HTTPClient for tests; returns 404 so no
@@ -149,6 +156,9 @@ func TestRunWithDeps_WithUpdates(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(pkgJSON), 0644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(dir, "package-lock.json"), []byte(`{"lockfileVersion":3}`), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	npmOutdated := `{
 		"axios":   {"current":"1.6.0","wanted":"1.6.8","latest":"1.6.8"},
@@ -181,7 +191,7 @@ func TestRunWithDeps_WithUpdates(t *testing.T) {
 	if !ghMock.createPRCalled {
 		t.Error("should create PR for major updates")
 	}
-	if !strings.Contains(ghMock.lastPRRequest.Body, "Dependency Guardian Report") {
+	if !strings.Contains(ghMock.lastPRRequest.Body, "Dependency Curator Report") {
 		t.Errorf("PR body should contain report header, got:\n%s", ghMock.lastPRRequest.Body)
 	}
 }
@@ -216,9 +226,6 @@ func TestRunWithDeps_ExistingPR(t *testing.T) {
 
 	if err := runWithDeps(baseCfg(dir), d); err != nil {
 		t.Fatalf("unexpected error: %v", err)
-	}
-	if ghMock.createBranchCalled {
-		t.Error("should not create branch when it already exists")
 	}
 	if ghMock.createPRCalled {
 		t.Error("should not create new PR when one already exists")

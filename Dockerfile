@@ -4,10 +4,10 @@ WORKDIR /build
 COPY go.mod go.sum* ./
 RUN go mod download 2>/dev/null || true
 COPY . .
-RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -o /dependency-guardian ./cmd/action/
+RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -o /dependency-curator ./cmd/action/
 
 FROM node:22-alpine
 
-COPY --from=builder /dependency-guardian /usr/local/bin/dependency-guardian
+COPY --from=builder /dependency-curator /usr/local/bin/dependency-curator
 
-ENTRYPOINT ["dependency-guardian"]
+ENTRYPOINT ["dependency-curator"]

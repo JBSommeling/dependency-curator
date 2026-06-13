@@ -1,4 +1,4 @@
-# Contributing to Dependency Guardian
+# Contributing to Dependency Curator
 
 Thank you for your interest in contributing!
 
@@ -58,7 +58,7 @@ pkg/
 
 ## Adding a New Ecosystem
 
-Dependency Guardian is designed to support multiple ecosystems. To add support for a new package manager:
+Dependency Curator is designed to support multiple ecosystems. To add support for a new package manager:
 
 1. Implement the `dependency.Provider` interface in a new package
 2. Implement the equivalent scanner, security, and updater logic

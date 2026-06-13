@@ -1,5 +1,7 @@
 package changelog
 
+import "context"
+
 type ChangelogInfo struct {
 	PackageName     string
 	FromVersion     string
@@ -12,5 +14,5 @@ type ChangelogInfo struct {
 }
 
 type Provider interface {
-	FetchChangelog(pkg string, fromVer, toVer string) (*ChangelogInfo, error)
+	FetchChangelog(ctx context.Context, pkg string, fromVer, toVer string) (*ChangelogInfo, error)
 }

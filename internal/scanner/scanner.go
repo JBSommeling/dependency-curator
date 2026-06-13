@@ -18,11 +18,12 @@ type Update struct {
 }
 
 type Scanner struct {
-	runner exec.CommandRunner
+	runner     exec.CommandRunner
+	includeDev bool
 }
 
-func New(runner exec.CommandRunner) *Scanner {
-	return &Scanner{runner: runner}
+func New(runner exec.CommandRunner, includeDev bool) *Scanner {
+	return &Scanner{runner: runner, includeDev: includeDev}
 }
 
 // npmOutdatedEntry represents one entry from `npm outdated --json`
@@ -34,7 +35,11 @@ type npmOutdatedEntry struct {
 }
 
 func (s *Scanner) ListAvailable(ctx context.Context, projectDir string) ([]Update, error) {
-	output, err := s.runner.Run(ctx, projectDir, "npm", "outdated", "--json")
+	args := []string{"outdated", "--json"}
+	if !s.includeDev {
+		args = append(args, "--omit=dev")
+	}
+	output, err := s.runner.RunAllowExit1(ctx, projectDir, "npm", args...)
 	if err != nil {
 		return nil, fmt.Errorf("running npm outdated: %w", err)
 	}

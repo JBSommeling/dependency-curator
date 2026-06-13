@@ -1,6 +1,6 @@
 .PHONY: build test lint docker clean
 
-BINARY=dependency-guardian
+BINARY=dependency-curator
 GOFLAGS=-trimpath
 
 build:
@@ -13,7 +13,7 @@ lint:
 	golangci-lint run ./...
 
 docker:
-	docker build -t dependency-guardian .
+	docker build -t dependency-curator .
 
 clean:
 	rm -f $(BINARY)

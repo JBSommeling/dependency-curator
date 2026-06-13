@@ -34,7 +34,7 @@ func (u *Updater) ApplyPatches(ctx context.Context, projectDir string, deps []de
 
 	for _, d := range patches {
 		pkg := d.Name + "@" + d.LatestVersion
-		_, err := u.runner.Run(ctx, projectDir, "npm", "install", pkg)
+		_, err := u.runner.Run(ctx, projectDir, "npm", "install", "--", pkg)
 		if err != nil {
 			errs = append(errs, fmt.Sprintf("%s: %v", d.Name, err))
 			continue

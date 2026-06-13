@@ -24,11 +24,12 @@ type Scanner interface {
 }
 
 type NpmAuditScanner struct {
-	runner exec.CommandRunner
+	runner     exec.CommandRunner
+	includeDev bool
 }
 
-func NewNpmAuditScanner(runner exec.CommandRunner) *NpmAuditScanner {
-	return &NpmAuditScanner{runner: runner}
+func NewNpmAuditScanner(runner exec.CommandRunner, includeDev bool) *NpmAuditScanner {
+	return &NpmAuditScanner{runner: runner, includeDev: includeDev}
 }
 
 // npm audit --json v2 format
@@ -54,7 +55,11 @@ type npmViaEntry struct {
 }
 
 func (s *NpmAuditScanner) Scan(ctx context.Context, projectDir string) ([]Advisory, error) {
-	output, err := s.runner.Run(ctx, projectDir, "npm", "audit", "--json")
+	args := []string{"audit", "--json"}
+	if !s.includeDev {
+		args = append(args, "--omit=dev")
+	}
+	output, err := s.runner.RunAllowExit1(ctx, projectDir, "npm", args...)
 	if err != nil {
 		return nil, fmt.Errorf("running npm audit: %w", err)
 	}

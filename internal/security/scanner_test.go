@@ -15,11 +15,15 @@ func (m *mockRunner) Run(ctx context.Context, dir string, name string, args ...s
 	return m.output, m.err
 }
 
+func (m *mockRunner) RunAllowExit1(ctx context.Context, dir string, name string, args ...string) ([]byte, error) {
+	return m.Run(ctx, dir, name, args...)
+}
+
 func TestNpmAuditScanner_CleanAudit(t *testing.T) {
 	runner := &mockRunner{
 		output: []byte(`{"vulnerabilities": {}}`),
 	}
-	scanner := NewNpmAuditScanner(runner)
+	scanner := NewNpmAuditScanner(runner, true)
 
 	advisories, err := scanner.Scan(context.Background(), "/tmp/project")
 	if err != nil {
@@ -53,7 +57,7 @@ func TestNpmAuditScanner_SingleVulnerability(t *testing.T) {
   }
 }`),
 	}
-	scanner := NewNpmAuditScanner(runner)
+	scanner := NewNpmAuditScanner(runner, true)
 
 	advisories, err := scanner.Scan(context.Background(), "/tmp/project")
 	if err != nil {
@@ -100,7 +104,7 @@ func TestNpmAuditScanner_MultipleVulnerabilities(t *testing.T) {
   }
 }`),
 	}
-	scanner := NewNpmAuditScanner(runner)
+	scanner := NewNpmAuditScanner(runner, true)
 
 	advisories, err := scanner.Scan(context.Background(), "/tmp/project")
 	if err != nil {
@@ -125,7 +129,7 @@ func TestNpmAuditScanner_TransitiveDependencyViaString(t *testing.T) {
   }
 }`),
 	}
-	scanner := NewNpmAuditScanner(runner)
+	scanner := NewNpmAuditScanner(runner, true)
 
 	advisories, err := scanner.Scan(context.Background(), "/tmp/project")
 	if err != nil {
@@ -140,7 +144,7 @@ func TestNpmAuditScanner_EmptyOutput(t *testing.T) {
 	runner := &mockRunner{
 		output: []byte{},
 	}
-	scanner := NewNpmAuditScanner(runner)
+	scanner := NewNpmAuditScanner(runner, true)
 
 	advisories, err := scanner.Scan(context.Background(), "/tmp/project")
 	if err != nil {
@@ -155,7 +159,7 @@ func TestNpmAuditScanner_RunnerError(t *testing.T) {
 	runner := &mockRunner{
 		err: errors.New("command failed"),
 	}
-	scanner := NewNpmAuditScanner(runner)
+	scanner := NewNpmAuditScanner(runner, true)
 
 	_, err := scanner.Scan(context.Background(), "/tmp/project")
 	if err == nil {
@@ -167,7 +171,7 @@ func TestNpmAuditScanner_InvalidJSON(t *testing.T) {
 	runner := &mockRunner{
 		output: []byte(`not valid json at all {{{`),
 	}
-	scanner := NewNpmAuditScanner(runner)
+	scanner := NewNpmAuditScanner(runner, true)
 
 	_, err := scanner.Scan(context.Background(), "/tmp/project")
 	if err == nil {
