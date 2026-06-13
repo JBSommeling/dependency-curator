@@ -9,6 +9,8 @@ func minimalEnv(t *testing.T) {
 	t.Helper()
 	t.Setenv("INPUT_GITHUB_TOKEN", "test-token")
 	t.Setenv("GITHUB_REPOSITORY", "owner/repo")
+	t.Setenv("GITHUB_WORKSPACE", "")
+	t.Setenv("INPUT_PROJECT_DIR", "")
 }
 
 func TestLoad_DefaultsOnly(t *testing.T) {
