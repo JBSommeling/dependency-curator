@@ -1,0 +1,51 @@
+name: 'Dependency Guardian'
+description: 'Automatically maintain project dependencies while minimizing pull request noise'
+author: 'JBSommeling'
+
+branding:
+  icon: 'shield'
+  color: 'green'
+
+inputs:
+  github_token:
+    description: 'GitHub token for API access'
+    required: true
+    default: ${{ github.token }}
+  auto_patch:
+    description: 'Automatically apply patch updates'
+    required: false
+    default: 'true'
+  create_pr:
+    description: 'Create PR for minor/major updates'
+    required: false
+    default: 'true'
+  include_dev_dependencies:
+    description: 'Include devDependencies in updates'
+    required: false
+    default: 'true'
+  schedule_label:
+    description: 'Label for branch naming'
+    required: false
+    default: 'weekly'
+  risk_threshold:
+    description: 'Maximum risk level to auto-apply (low, medium, high)'
+    required: false
+    default: 'high'
+  base_branch:
+    description: 'Target branch for PRs (defaults to repo default branch)'
+    required: false
+    default: ''
+
+outputs:
+  patches_applied:
+    description: 'Number of patch updates applied'
+  updates_available:
+    description: 'Number of minor/major updates available'
+  vulnerabilities_found:
+    description: 'Number of vulnerabilities found'
+  pr_url:
+    description: 'URL of the created/updated pull request'
+
+runs:
+  using: 'docker'
+  image: 'Dockerfile'
