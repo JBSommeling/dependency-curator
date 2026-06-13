@@ -19,6 +19,24 @@ import (
 	"github.com/JBSommeling/dependency-curator/internal/updater"
 )
 
+type ghClientInterface interface {
+	GetDefaultBranch(ctx context.Context, owner, repo string) (string, error)
+	GetRef(ctx context.Context, owner, repo, ref string) (string, error)
+	BranchExists(ctx context.Context, owner, repo, branch string) (bool, error)
+	CreateBranch(ctx context.Context, owner, repo, branch, fromSHA string) error
+	CommitFiles(ctx context.Context, owner, repo, branch, message string, files map[string][]byte) (string, error)
+	FindOpenPR(ctx context.Context, owner, repo, head, base string) (int, bool, error)
+	CreatePR(ctx context.Context, owner, repo string, pr gh.PRRequest) (string, int, error)
+	UpdatePR(ctx context.Context, owner, repo string, prNumber int, pr gh.PRRequest) error
+	AddLabels(ctx context.Context, owner, repo string, prNumber int, labels []string) error
+}
+
+type deps struct {
+	runner     exec.CommandRunner
+	ghClient   ghClientInterface
+	httpClient changelog.HTTPClient
+}
+
 func main() {
 	if err := run(); err != nil {
 		log.Fatalf("error: %v", err)
@@ -26,24 +44,30 @@ func main() {
 }
 
 func run() error {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
-	defer cancel()
-
-	// Step 1: Load config
+	httpClient := &http.Client{Timeout: 30 * time.Second}
 	cfg, err := config.Load()
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
 	}
-	log.Printf("loaded config for %s/%s", cfg.Owner, cfg.Repo)
+	d := &deps{
+		runner:     exec.NewDefaultRunner(),
+		ghClient:   gh.NewClient(httpClient, cfg.Token),
+		httpClient: httpClient,
+	}
+	return runWithDeps(cfg, d)
+}
 
-	runner := exec.NewDefaultRunner()
-	httpClient := &http.Client{Timeout: 30 * time.Second}
-	ghClient := gh.NewClient(httpClient, cfg.Token)
+func runWithDeps(cfg *config.Config, d *deps) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+
+	log.Printf("loaded config for %s/%s", cfg.Owner, cfg.Repo)
 
 	// Resolve base branch
 	baseBranch := cfg.BaseBranch
+	var err error
 	if baseBranch == "" {
-		baseBranch, err = ghClient.GetDefaultBranch(ctx, cfg.Owner, cfg.Repo)
+		baseBranch, err = d.ghClient.GetDefaultBranch(ctx, cfg.Owner, cfg.Repo)
 		if err != nil {
 			return fmt.Errorf("getting default branch: %w", err)
 		}
@@ -59,9 +83,9 @@ func run() error {
 
 	if !cfg.IncludeDev {
 		var filtered []dependency.Dependency
-		for _, d := range deps {
-			if !d.IsDev {
-				filtered = append(filtered, d)
+		for _, dep := range deps {
+			if !dep.IsDev {
+				filtered = append(filtered, dep)
 			}
 		}
 		deps = filtered
@@ -77,7 +101,7 @@ func run() error {
 	}
 
 	// Step 3: Check for available updates
-	sc := scanner.New(runner)
+	sc := scanner.New(d.runner)
 	updates, err := sc.ListAvailable(ctx, cfg.ProjectDir)
 	if err != nil {
 		return fmt.Errorf("listing available updates: %w", err)
@@ -85,7 +109,7 @@ func run() error {
 	log.Printf("found %d available updates", len(updates))
 
 	// Step 4: Scan vulnerabilities
-	secScanner := security.NewNpmAuditScanner(runner)
+	secScanner := security.NewNpmAuditScanner(d.runner)
 	advisories, err := secScanner.Scan(ctx, cfg.ProjectDir)
 	if err != nil {
 		log.Printf("warning: vulnerability scan failed: %v", err)
@@ -98,12 +122,12 @@ func run() error {
 
 	// Classify
 	var patches, minorMajor []dependency.Dependency
-	for _, d := range enriched {
-		switch d.UpdateType {
+	for _, dep := range enriched {
+		switch dep.UpdateType {
 		case "patch":
-			patches = append(patches, d)
+			patches = append(patches, dep)
 		case "minor", "major":
-			minorMajor = append(minorMajor, d)
+			minorMajor = append(minorMajor, dep)
 		}
 	}
 
@@ -113,16 +137,16 @@ func run() error {
 	// Step 6: Ensure update branch exists
 	needsBranch := (cfg.AutoPatch && len(patches) > 0) || (cfg.CreatePR && len(minorMajor) > 0)
 	if needsBranch {
-		exists, err := ghClient.BranchExists(ctx, cfg.Owner, cfg.Repo, updateBranch)
+		exists, err := d.ghClient.BranchExists(ctx, cfg.Owner, cfg.Repo, updateBranch)
 		if err != nil {
 			return fmt.Errorf("checking branch: %w", err)
 		}
 		if !exists {
-			baseSHA, err := ghClient.GetRef(ctx, cfg.Owner, cfg.Repo, "heads/"+baseBranch)
+			baseSHA, err := d.ghClient.GetRef(ctx, cfg.Owner, cfg.Repo, "heads/"+baseBranch)
 			if err != nil {
 				return fmt.Errorf("getting base ref: %w", err)
 			}
-			if err := ghClient.CreateBranch(ctx, cfg.Owner, cfg.Repo, updateBranch, baseSHA); err != nil {
+			if err := d.ghClient.CreateBranch(ctx, cfg.Owner, cfg.Repo, updateBranch, baseSHA); err != nil {
 				return fmt.Errorf("creating update branch: %w", err)
 			}
 			log.Printf("created branch %s", updateBranch)
@@ -132,7 +156,7 @@ func run() error {
 	// Step 7: Apply patch updates
 	if cfg.AutoPatch && len(patches) > 0 {
 		log.Printf("applying %d patch updates", len(patches))
-		upd := updater.New(runner)
+		upd := updater.New(d.runner)
 		applied, err := upd.ApplyPatches(ctx, cfg.ProjectDir, enriched)
 		if err != nil {
 			log.Printf("warning: some patches failed: %v", err)
@@ -150,7 +174,7 @@ func run() error {
 				files[fname] = data
 			}
 			if len(files) > 0 {
-				_, err := ghClient.CommitFiles(ctx, cfg.Owner, cfg.Repo, updateBranch,
+				_, err := d.ghClient.CommitFiles(ctx, cfg.Owner, cfg.Repo, updateBranch,
 					"chore(deps): apply weekly patch updates", files)
 				if err != nil {
 					return fmt.Errorf("committing patch updates: %w", err)
@@ -164,16 +188,16 @@ func run() error {
 	var prURL string
 	if cfg.CreatePR && len(minorMajor) > 0 {
 		// Fetch changelogs for major updates
-		clProvider := changelog.NewNpmRegistryProvider(httpClient)
+		clProvider := changelog.NewNpmRegistryProvider(d.httpClient)
 		changelogs := make(map[string]*changelog.ChangelogInfo)
-		for _, d := range enriched {
-			if d.UpdateType == "major" {
-				cl, err := clProvider.FetchChangelog(d.Name, d.CurrentVersion, d.LatestVersion)
+		for _, dep := range enriched {
+			if dep.UpdateType == "major" {
+				cl, err := clProvider.FetchChangelog(dep.Name, dep.CurrentVersion, dep.LatestVersion)
 				if err != nil {
-					log.Printf("warning: changelog fetch failed for %s: %v", d.Name, err)
+					log.Printf("warning: changelog fetch failed for %s: %v", dep.Name, err)
 					continue
 				}
-				changelogs[d.Name] = cl
+				changelogs[dep.Name] = cl
 			}
 		}
 
@@ -183,7 +207,7 @@ func run() error {
 		title := fmt.Sprintf("chore(deps): %s dependency updates", cfg.ScheduleLabel)
 
 		// Check for existing PR
-		prNumber, found, err := ghClient.FindOpenPR(ctx, cfg.Owner, cfg.Repo, updateBranch, baseBranch)
+		prNumber, found, err := d.ghClient.FindOpenPR(ctx, cfg.Owner, cfg.Repo, updateBranch, baseBranch)
 		if err != nil {
 			return fmt.Errorf("finding existing PR: %w", err)
 		}
@@ -196,13 +220,13 @@ func run() error {
 		}
 
 		if found {
-			if err := ghClient.UpdatePR(ctx, cfg.Owner, cfg.Repo, prNumber, pr); err != nil {
+			if err := d.ghClient.UpdatePR(ctx, cfg.Owner, cfg.Repo, prNumber, pr); err != nil {
 				return fmt.Errorf("updating PR: %w", err)
 			}
 			prURL = fmt.Sprintf("https://github.com/%s/%s/pull/%d", cfg.Owner, cfg.Repo, prNumber)
 			log.Printf("updated PR #%d", prNumber)
 		} else {
-			url, num, err := ghClient.CreatePR(ctx, cfg.Owner, cfg.Repo, pr)
+			url, num, err := d.ghClient.CreatePR(ctx, cfg.Owner, cfg.Repo, pr)
 			if err != nil {
 				return fmt.Errorf("creating PR: %w", err)
 			}
@@ -210,7 +234,7 @@ func run() error {
 			log.Printf("created PR #%d: %s", num, url)
 
 			if len(cfg.Labels) > 0 {
-				if err := ghClient.AddLabels(ctx, cfg.Owner, cfg.Repo, num, cfg.Labels); err != nil {
+				if err := d.ghClient.AddLabels(ctx, cfg.Owner, cfg.Repo, num, cfg.Labels); err != nil {
 					log.Printf("warning: failed to add labels: %v", err)
 				}
 			}
