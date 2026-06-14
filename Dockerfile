@@ -8,6 +8,14 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -o /dependency-curator ./cmd/act
 
 FROM node:22-alpine
 
+RUN apk add --no-cache php83 php83-phar php83-mbstring php83-openssl php83-curl php83-json php83-iconv php83-zip php83-tokenizer php83-xmlwriter php83-xml php83-dom php83-simplexml composer go \
+    && ln -sf /usr/bin/php83 /usr/bin/php
+
+ENV GOPATH=/root/go
+ENV PATH=$GOPATH/bin:$PATH
+
+RUN go install golang.org/x/vuln/cmd/govulncheck@latest
+
 COPY --from=builder /dependency-curator /usr/local/bin/dependency-curator
 
 ENTRYPOINT ["dependency-curator"]

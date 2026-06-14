@@ -8,7 +8,8 @@ Thank you for your interest in contributing!
 
 - Go 1.24+
 - Docker (for building the action image)
-- Node.js 22+ and npm (for integration testing)
+- Node.js 22+ and npm (for npm ecosystem testing)
+- PHP 8.3+ and Composer (for Composer ecosystem testing)
 
 ### Getting Started
 
@@ -41,13 +42,15 @@ Thank you for your interest in contributing!
 ## Project Structure
 
 ```
-cmd/action/          Main entrypoint
+cmd/action/          Main entrypoint and orchestrator
 internal/
   config/            Action input parsing
-  dependency/        Dependency model and discovery
+  dependency/        Dependency model, enrichment, and provider interface
   scanner/           npm outdated parsing
   security/          npm audit parsing
-  updater/           Patch update application
+  updater/           npm patch update application
+  composer/          Composer provider, scanner, security, and updater
+  gomod/             Go modules provider, scanner, security, and updater
   reporting/         Markdown report generation
   github/            GitHub API client
   changelog/         Changelog metadata collection

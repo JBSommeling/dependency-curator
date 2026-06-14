@@ -1,6 +1,6 @@
 # Dependency Curator
 
-A GitHub Action that automatically maintains project dependencies while minimizing pull request noise.
+A GitHub Action that automatically maintains project dependencies across multiple ecosystems while minimizing pull request noise.
 
 ## Why?
 
@@ -11,6 +11,7 @@ Tools like Dependabot and Renovate create dozens of individual PRs for routine d
 - Automatically applies safe patch updates in a single commit
 - Creates one consolidated PR for all minor and major updates
 - Generates a detailed report with security advisories and breaking changes
+- Supports multiple ecosystems (npm, Composer, Go) in a single run
 - Reduces maintenance burden to reviewing a single, well-documented PR
 
 ## Quick Start
@@ -42,12 +43,22 @@ jobs:
 
 On each run, Dependency Curator:
 
-1. Discovers all dependencies from `package.json`
-2. Checks for available updates via `npm outdated`
-3. Scans for vulnerabilities via `npm audit`
+1. Auto-detects supported ecosystems in your project
+2. Discovers dependencies from each ecosystem's manifest
+3. Checks for available updates and scans for vulnerabilities
 4. Classifies updates as patch, minor, or major
-5. **Patch updates**: Automatically applied and committed
-6. **Minor + Major updates**: Grouped into a single PR with a detailed report
+5. **Patch updates**: Automatically applied and committed (per ecosystem)
+6. **Minor + Major updates**: Grouped into a single consolidated PR with a detailed report
+
+### Supported Ecosystems
+
+| Ecosystem | Manifest | Updates | Vulnerabilities |
+|-----------|----------|---------|-----------------|
+| **npm** | `package.json` | `npm outdated` | `npm audit` |
+| **Composer** | `composer.json` | `composer outdated` | `composer audit` |
+| **Go Modules** | `go.mod` | `go list -m -u` | `govulncheck` |
+
+All detected ecosystems are processed in a single run and combined into one PR.
 
 ## PR Report
 
@@ -103,8 +114,8 @@ Each step is a separate, testable module. See [CONTRIBUTING.md](CONTRIBUTING.md)
 
 ## Roadmap
 
-- [ ] Composer (PHP) support
-- [ ] Go Modules support
+- [x] Composer (PHP) support
+- [x] Go Modules support
 - [ ] Python (pip/poetry) support
 - [ ] Rust (Cargo) support
 - [ ] Monorepo support

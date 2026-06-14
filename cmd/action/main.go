@@ -7,13 +7,16 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/JBSommeling/dependency-curator/internal/changelog"
+	"github.com/JBSommeling/dependency-curator/internal/composer"
 	"github.com/JBSommeling/dependency-curator/internal/config"
 	"github.com/JBSommeling/dependency-curator/internal/dependency"
 	"github.com/JBSommeling/dependency-curator/internal/exec"
 	gh "github.com/JBSommeling/dependency-curator/internal/github"
+	"github.com/JBSommeling/dependency-curator/internal/gomod"
 	"github.com/JBSommeling/dependency-curator/internal/reporting"
 	"github.com/JBSommeling/dependency-curator/internal/scanner"
 	"github.com/JBSommeling/dependency-curator/internal/security"
@@ -39,6 +42,15 @@ type deps struct {
 	httpClient changelog.HTTPClient
 }
 
+type ecosystem struct {
+	name          string
+	provider      dependency.Provider
+	listUpdates   func(ctx context.Context, dir string) ([]dependency.UpdateInfo, error)
+	scanVulns     func(ctx context.Context, dir string) ([]dependency.AdvisoryInfo, error)
+	applyPatches  func(ctx context.Context, dir string, deps []dependency.Dependency) ([]dependency.Dependency, error)
+	manifestFiles []string // files to commit after patching
+}
+
 func main() {
 	if err := run(); err != nil {
 		log.Fatalf("error: %v", err)
@@ -59,6 +71,86 @@ func run() error {
 	return runWithDeps(cfg, d)
 }
 
+func detectEcosystems(projectDir string, runner exec.CommandRunner, includeDev bool) []ecosystem {
+	var ecosystems []ecosystem
+
+	if fileExists(filepath.Join(projectDir, "package.json")) {
+		npmScanner := scanner.New(runner, includeDev)
+		npmSecurity := security.NewNpmAuditScanner(runner, includeDev)
+		npmUpdater := updater.New(runner)
+		ecosystems = append(ecosystems, ecosystem{
+			name:     "npm",
+			provider: dependency.NewPackageJSONProvider(),
+			listUpdates: func(ctx context.Context, dir string) ([]dependency.UpdateInfo, error) {
+				updates, err := npmScanner.ListAvailable(ctx, dir)
+				if err != nil {
+					return nil, err
+				}
+				var infos []dependency.UpdateInfo
+				for _, u := range updates {
+					infos = append(infos, dependency.UpdateInfo{
+						Name: u.Name, Current: u.Current, Wanted: u.Wanted,
+						Latest: u.Latest, UpdateType: u.UpdateType,
+					})
+				}
+				return infos, nil
+			},
+			scanVulns: func(ctx context.Context, dir string) ([]dependency.AdvisoryInfo, error) {
+				advs, err := npmSecurity.Scan(ctx, dir)
+				if err != nil {
+					return nil, err
+				}
+				var infos []dependency.AdvisoryInfo
+				for _, a := range advs {
+					infos = append(infos, dependency.AdvisoryInfo{
+						ID: a.ID, Package: a.Package, Severity: a.Severity,
+						Title: a.Title, AffectedVersions: a.AffectedVersions,
+						FixedVersion: a.FixedVersion, URL: a.URL,
+					})
+				}
+				return infos, nil
+			},
+			applyPatches:  npmUpdater.ApplyPatches,
+			manifestFiles: []string{"package.json", "package-lock.json"},
+		})
+	}
+
+	if fileExists(filepath.Join(projectDir, "composer.json")) {
+		composerScanner := composer.NewScanner(runner, includeDev)
+		composerSecurity := composer.NewAuditScanner(runner, includeDev)
+		composerUpdater := composer.NewUpdater(runner)
+		ecosystems = append(ecosystems, ecosystem{
+			name:          "composer",
+			provider:      composer.NewComposerProvider(),
+			listUpdates:   composerScanner.ListAvailable,
+			scanVulns:     composerSecurity.Scan,
+			applyPatches:  composerUpdater.ApplyPatches,
+			manifestFiles: []string{"composer.json", "composer.lock"},
+		})
+	}
+
+	if fileExists(filepath.Join(projectDir, "go.mod")) {
+		goScanner := gomod.NewScanner(runner)
+		goSecurity := gomod.NewVulnScanner(runner)
+		goUpdater := gomod.NewUpdater(runner)
+		ecosystems = append(ecosystems, ecosystem{
+			name:          "gomod",
+			provider:      gomod.NewProvider(),
+			listUpdates:   goScanner.ListAvailable,
+			scanVulns:     goSecurity.Scan,
+			applyPatches:  goUpdater.ApplyPatches,
+			manifestFiles: []string{"go.mod", "go.sum"},
+		})
+	}
+
+	return ecosystems
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
+}
+
 func runWithDeps(cfg *config.Config, d *deps) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
@@ -76,16 +168,68 @@ func runWithDeps(cfg *config.Config, d *deps) error {
 	}
 	log.Printf("base branch: %s", baseBranch)
 
-	// Step 2: Discover dependencies
-	provider := dependency.NewPackageJSONProvider()
-	deps, err := provider.Discover(cfg.ProjectDir)
-	if err != nil {
-		return fmt.Errorf("discovering dependencies: %w", err)
+	// Detect ecosystems
+	ecosystems := detectEcosystems(cfg.ProjectDir, d.runner, cfg.IncludeDev)
+	if len(ecosystems) == 0 {
+		log.Println("no supported ecosystems detected, nothing to do")
+		setOutput("patches_applied", "0")
+		setOutput("updates_available", "0")
+		setOutput("vulnerabilities_found", "0")
+		return nil
+	}
+	log.Printf("detected ecosystems: %s", ecosystemNames(ecosystems))
+
+	// Aggregate across all ecosystems
+	var allDeps []dependency.Dependency
+	var allAdvisories []dependency.AdvisoryInfo
+	type ecosystemPatches struct {
+		eco     ecosystem
+		patches []dependency.Dependency
+	}
+	var patchGroups []ecosystemPatches
+
+	for _, eco := range ecosystems {
+		log.Printf("[%s] discovering dependencies", eco.name)
+		discovered, err := eco.provider.Discover(cfg.ProjectDir)
+		if err != nil {
+			return fmt.Errorf("[%s] discovering dependencies: %w", eco.name, err)
+		}
+		log.Printf("[%s] found %d dependencies", eco.name, len(discovered))
+
+		if len(discovered) == 0 {
+			continue
+		}
+
+		updates, err := eco.listUpdates(ctx, cfg.ProjectDir)
+		if err != nil {
+			return fmt.Errorf("[%s] listing updates: %w", eco.name, err)
+		}
+		log.Printf("[%s] found %d available updates", eco.name, len(updates))
+
+		advisories, err := eco.scanVulns(ctx, cfg.ProjectDir)
+		if err != nil {
+			log.Printf("[%s] warning: vulnerability scan failed: %v", eco.name, err)
+		} else {
+			log.Printf("[%s] found %d advisories", eco.name, len(advisories))
+		}
+
+		enriched := dependency.Enrich(discovered, updates, advisories)
+		allDeps = append(allDeps, enriched...)
+		allAdvisories = append(allAdvisories, advisories...)
+
+		// Collect patches per ecosystem (need separate updaters)
+		var patches []dependency.Dependency
+		for _, dep := range enriched {
+			if dep.UpdateType == "patch" {
+				patches = append(patches, dep)
+			}
+		}
+		if len(patches) > 0 {
+			patchGroups = append(patchGroups, ecosystemPatches{eco: eco, patches: patches})
+		}
 	}
 
-	log.Printf("discovered %d dependencies", len(deps))
-
-	if len(deps) == 0 {
+	if len(allDeps) == 0 {
 		log.Println("no dependencies found, nothing to do")
 		setOutput("patches_applied", "0")
 		setOutput("updates_available", "0")
@@ -93,59 +237,10 @@ func runWithDeps(cfg *config.Config, d *deps) error {
 		return nil
 	}
 
-	// Step 3: Check for available updates
-	sc := scanner.New(d.runner, cfg.IncludeDev)
-	updates, err := sc.ListAvailable(ctx, cfg.ProjectDir)
-	if err != nil {
-		return fmt.Errorf("listing available updates: %w", err)
-	}
-	log.Printf("found %d available updates", len(updates))
-
-	// Step 4: Scan vulnerabilities
-	secScanner := security.NewNpmAuditScanner(d.runner, cfg.IncludeDev)
-	advisories, err := secScanner.Scan(ctx, cfg.ProjectDir)
-	if err != nil {
-		log.Printf("warning: vulnerability scan failed: %v", err)
-		// Non-fatal — continue without advisory data
-	}
-	log.Printf("found %d advisories", len(advisories))
-
-	// Step 5: Enrich dependencies
-	// Convert scanner updates to dependency.UpdateInfo
-	var updateInfos []dependency.UpdateInfo
-	for _, u := range updates {
-		updateInfos = append(updateInfos, dependency.UpdateInfo{
-			Name:       u.Name,
-			Current:    u.Current,
-			Wanted:     u.Wanted,
-			Latest:     u.Latest,
-			UpdateType: u.UpdateType,
-		})
-	}
-
-	// Convert security advisories to dependency.AdvisoryInfo
-	var advisoryInfos []dependency.AdvisoryInfo
-	for _, a := range advisories {
-		advisoryInfos = append(advisoryInfos, dependency.AdvisoryInfo{
-			ID:               a.ID,
-			Package:          a.Package,
-			Severity:         a.Severity,
-			Title:            a.Title,
-			AffectedVersions: a.AffectedVersions,
-			FixedVersion:     a.FixedVersion,
-			URL:              a.URL,
-		})
-	}
-
-	enriched := dependency.Enrich(deps, updateInfos, advisoryInfos)
-
-	// Classify
-	var patches, minorMajor []dependency.Dependency
-	for _, dep := range enriched {
-		switch dep.UpdateType {
-		case "patch":
-			patches = append(patches, dep)
-		case "minor", "major":
+	// Classify all
+	var minorMajor []dependency.Dependency
+	for _, dep := range allDeps {
+		if dep.UpdateType == "minor" || dep.UpdateType == "major" {
 			minorMajor = append(minorMajor, dep)
 		}
 	}
@@ -153,8 +248,8 @@ func runWithDeps(cfg *config.Config, d *deps) error {
 	patchesApplied := 0
 	updateBranch := cfg.UpdateBranch()
 
-	// Step 6: Ensure update branch exists
-	needsBranch := (cfg.AutoPatch && len(patches) > 0) || (cfg.CreatePR && len(minorMajor) > 0)
+	// Ensure update branch exists
+	needsBranch := (cfg.AutoPatch && len(patchGroups) > 0) || (cfg.CreatePR && len(minorMajor) > 0)
 	if needsBranch {
 		baseSHA, err := d.ghClient.GetRef(ctx, cfg.Owner, cfg.Repo, "heads/"+baseBranch)
 		if err != nil {
@@ -165,7 +260,6 @@ func runWithDeps(cfg *config.Config, d *deps) error {
 			if existsErr != nil || !exists {
 				return fmt.Errorf("creating update branch: %w", err)
 			}
-			// Fast-forward existing branch to current base
 			if err := d.ghClient.UpdateRef(ctx, cfg.Owner, cfg.Repo, "heads/"+updateBranch, baseSHA); err != nil {
 				return fmt.Errorf("updating branch ref: %w", err)
 			}
@@ -175,45 +269,43 @@ func runWithDeps(cfg *config.Config, d *deps) error {
 		}
 	}
 
-	// Step 7: Apply patch updates
-	if cfg.AutoPatch && len(patches) > 0 {
-		log.Printf("applying %d patch updates", len(patches))
-		upd := updater.New(d.runner)
-		// Note: npm install runs against the local checkout which should match baseSHA for schedule triggers
-		applied, applyErr := upd.ApplyPatches(ctx, cfg.ProjectDir, enriched)
-		patchesApplied = len(applied)
-		if applyErr != nil {
-			log.Printf("warning: some patches failed: %v", applyErr)
-			// Don't commit potentially inconsistent state
-			patchesApplied = 0
-		} else if patchesApplied > 0 {
-			// Read updated files and commit via API
-			files := make(map[string][]byte)
-			for _, fname := range []string{"package.json", "package-lock.json"} {
-				path := filepath.Join(cfg.ProjectDir, fname)
-				data, err := os.ReadFile(path)
-				if err != nil {
-					return fmt.Errorf("reading %s after patch updates: %w", fname, err)
+	// Apply patches per ecosystem
+	if cfg.AutoPatch {
+		for _, pg := range patchGroups {
+			log.Printf("[%s] applying %d patch updates", pg.eco.name, len(pg.patches))
+			applied, applyErr := pg.eco.applyPatches(ctx, cfg.ProjectDir, pg.patches)
+			if applyErr != nil {
+				log.Printf("[%s] warning: some patches failed: %v", pg.eco.name, applyErr)
+			}
+			count := len(applied)
+			if count > 0 {
+				files := make(map[string][]byte)
+				for _, fname := range pg.eco.manifestFiles {
+					path := filepath.Join(cfg.ProjectDir, fname)
+					data, err := os.ReadFile(path)
+					if err != nil {
+						return fmt.Errorf("[%s] reading %s after patch updates: %w", pg.eco.name, fname, err)
+					}
+					files[fname] = data
 				}
-				files[fname] = data
+				msg := fmt.Sprintf("chore(deps): apply %s patch updates", pg.eco.name)
+				_, err := d.ghClient.CommitFiles(ctx, cfg.Owner, cfg.Repo, updateBranch, msg, files)
+				if err != nil {
+					return fmt.Errorf("[%s] committing patch updates: %w", pg.eco.name, err)
+				}
+				patchesApplied += count
+				log.Printf("[%s] committed %d patch updates", pg.eco.name, count)
 			}
-			_, err := d.ghClient.CommitFiles(ctx, cfg.Owner, cfg.Repo, updateBranch,
-				"chore(deps): apply weekly patch updates", files)
-			if err != nil {
-				return fmt.Errorf("committing patch updates: %w", err)
-			}
-			log.Printf("committed %d patch updates", patchesApplied)
 		}
 	}
 
-	// Step 8: Create/update PR for minor+major
+	// Create/update PR for minor+major
 	var prURL string
 	if cfg.CreatePR && len(minorMajor) > 0 {
-		// Fetch changelogs for major updates
 		clProvider := changelog.NewNpmRegistryProvider(d.httpClient)
 		changelogs := make(map[string]*changelog.ChangelogInfo)
-		for _, dep := range enriched {
-			if dep.UpdateType == "major" {
+		for _, dep := range allDeps {
+			if dep.UpdateType == "major" && isNpmPackage(dep.Name) {
 				cl, err := clProvider.FetchChangelog(ctx, dep.Name, dep.CurrentVersion, dep.LatestVersion)
 				if err != nil {
 					log.Printf("warning: changelog fetch failed for %s: %v", dep.Name, err)
@@ -223,12 +315,9 @@ func runWithDeps(cfg *config.Config, d *deps) error {
 			}
 		}
 
-		// Generate report
-		prBody := reporting.GeneratePRBody(enriched, changelogs)
-
+		prBody := reporting.GeneratePRBody(allDeps, changelogs)
 		title := fmt.Sprintf("chore(deps): %s dependency updates", cfg.ScheduleLabel)
 
-		// Check for existing PR
 		prNumber, found, err := d.ghClient.FindOpenPR(ctx, cfg.Owner, cfg.Repo, updateBranch, baseBranch)
 		if err != nil {
 			return fmt.Errorf("finding existing PR: %w", err)
@@ -263,20 +352,31 @@ func runWithDeps(cfg *config.Config, d *deps) error {
 		}
 	}
 
-	// Step 9: Write outputs
+	// Write outputs
 	setOutput("patches_applied", fmt.Sprintf("%d", patchesApplied))
 	setOutput("updates_available", fmt.Sprintf("%d", len(minorMajor)))
-	setOutput("vulnerabilities_found", fmt.Sprintf("%d", len(advisories)))
+	setOutput("vulnerabilities_found", fmt.Sprintf("%d", len(allAdvisories)))
 	if prURL != "" {
 		setOutput("pr_url", prURL)
 	}
 
-	// Write step summary
-	summary := reporting.GenerateSummary(enriched, patchesApplied)
+	summary := reporting.GenerateSummary(allDeps, patchesApplied)
 	writeSummary(summary)
 
-	log.Println("dependency guardian completed successfully")
+	log.Println("dependency curator completed successfully")
 	return nil
+}
+
+func isNpmPackage(name string) bool {
+	return !strings.Contains(name, "/") || strings.HasPrefix(name, "@")
+}
+
+func ecosystemNames(ecosystems []ecosystem) string {
+	names := make([]string, len(ecosystems))
+	for i, e := range ecosystems {
+		names[i] = e.name
+	}
+	return strings.Join(names, ", ")
 }
 
 func setOutput(name, value string) {
