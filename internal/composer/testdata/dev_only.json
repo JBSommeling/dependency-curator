@@ -1,0 +1,7 @@
+{
+  "name": "test/dev-only",
+  "require-dev": {
+    "phpstan/phpstan": "^1.10",
+    "friendsofphp/php-cs-fixer": "^3.0"
+  }
+}

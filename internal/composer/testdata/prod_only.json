@@ -1,0 +1,7 @@
+{
+  "name": "test/prod-only",
+  "require": {
+    "monolog/monolog": "^3.0",
+    "symfony/console": "~6.3.0"
+  }
+}
