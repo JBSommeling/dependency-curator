@@ -103,7 +103,7 @@ Each step is a separate, testable module. See [CONTRIBUTING.md](CONTRIBUTING.md)
 
 ## Roadmap
 
-- [ ] Composer (PHP) support
+- [x] Composer (PHP) support
 - [ ] Go Modules support
 - [ ] Python (pip/poetry) support
 - [ ] Rust (Cargo) support

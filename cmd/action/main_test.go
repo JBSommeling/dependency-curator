@@ -235,6 +235,115 @@ func TestRunWithDeps_ExistingPR(t *testing.T) {
 	}
 }
 
+// TestRunWithDeps_ComposerOnly verifies that when only composer.json is present
+// the orchestrator detects the composer ecosystem and creates a branch and PR.
+func TestRunWithDeps_ComposerOnly(t *testing.T) {
+	dir := t.TempDir()
+	composerJSON := `{
+		"name": "test/project",
+		"require": {
+			"guzzlehttp/guzzle": "^7.5.0",
+			"phpunit/phpunit": "^9.0.0"
+		}
+	}`
+	os.WriteFile(filepath.Join(dir, "composer.json"), []byte(composerJSON), 0644)
+	os.WriteFile(filepath.Join(dir, "composer.lock"), []byte(`{}`), 0644)
+
+	composerOutdated := `{
+		"installed": [
+			{"name": "guzzlehttp/guzzle", "version": "7.5.0", "latest": "7.5.3", "latest-status": "semver-safe-update"},
+			{"name": "phpunit/phpunit", "version": "9.6.0", "latest": "10.5.0", "latest-status": "update-possible"}
+		]
+	}`
+
+	ghMock := &mockGHClient{
+		defaultBranch: "main",
+		baseSHA:       "abc123",
+		createdPR:     1,
+		createdPRURL:  "https://github.com/test/repo/pull/1",
+		commitSHA:     "def456",
+	}
+
+	runner := &mockCmdRunner{responses: map[string]mockResponse{
+		"composer outdated --format=json --direct": {output: []byte(composerOutdated)},
+		"composer audit --format=json":             {output: []byte(`{"advisories":{}}`)},
+		"composer update --with guzzlehttp/guzzle:7.5.3": {output: nil},
+	}}
+
+	d := &deps{runner: runner, ghClient: ghMock, httpClient: &mockHTTPClient{}}
+
+	if err := runWithDeps(baseCfg(dir), d); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ghMock.createBranchCalled {
+		t.Error("should create branch for updates")
+	}
+	if !ghMock.createPRCalled {
+		t.Error("should create PR for major updates")
+	}
+}
+
+// TestRunWithDeps_MixedEcosystems verifies that when both package.json and
+// composer.json are present both ecosystems are discovered and combined into one PR.
+func TestRunWithDeps_MixedEcosystems(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{
+		"name":"test","version":"1.0.0",
+		"dependencies":{"axios":"^1.6.0"}
+	}`), 0644)
+	os.WriteFile(filepath.Join(dir, "package-lock.json"), []byte(`{"lockfileVersion":3}`), 0644)
+	os.WriteFile(filepath.Join(dir, "composer.json"), []byte(`{
+		"name":"test/project",
+		"require":{"monolog/monolog":"^3.0.0"}
+	}`), 0644)
+	os.WriteFile(filepath.Join(dir, "composer.lock"), []byte(`{}`), 0644)
+
+	ghMock := &mockGHClient{
+		defaultBranch: "main",
+		baseSHA:       "abc123",
+		createdPR:     1,
+		createdPRURL:  "https://github.com/test/repo/pull/1",
+		commitSHA:     "def456",
+	}
+
+	runner := &mockCmdRunner{responses: map[string]mockResponse{
+		"npm outdated --json":                      {output: []byte(`{"axios":{"current":"1.6.0","wanted":"1.6.8","latest":"1.6.8"}}`)},
+		"npm audit --json":                         {output: []byte(`{"vulnerabilities":{}}`)},
+		"npm install -- axios@1.6.8":               {output: nil},
+		"composer outdated --format=json --direct": {output: []byte(`{"installed":[{"name":"monolog/monolog","version":"3.0.0","latest":"3.5.0","latest-status":"semver-safe-update"}]}`)},
+		"composer audit --format=json":             {output: []byte(`{"advisories":{}}`)},
+	}}
+
+	d := &deps{runner: runner, ghClient: ghMock, httpClient: &mockHTTPClient{}}
+
+	if err := runWithDeps(baseCfg(dir), d); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ghMock.createPRCalled {
+		t.Error("should create PR with combined updates")
+	}
+	if !strings.Contains(ghMock.lastPRRequest.Body, "Dependency Curator Report") {
+		t.Error("PR body should contain report")
+	}
+}
+
+// TestRunWithDeps_NoEcosystems verifies that when no manifest files are present
+// the orchestrator exits cleanly without touching GitHub.
+func TestRunWithDeps_NoEcosystems(t *testing.T) {
+	dir := t.TempDir()
+
+	ghMock := &mockGHClient{defaultBranch: "main"}
+	runner := &mockCmdRunner{responses: map[string]mockResponse{}}
+	d := &deps{runner: runner, ghClient: ghMock, httpClient: &mockHTTPClient{}}
+
+	if err := runWithDeps(baseCfg(dir), d); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ghMock.createBranchCalled {
+		t.Error("should not create branch when no ecosystems detected")
+	}
+}
+
 // TestSetOutput verifies that setOutput writes the key and value to the file
 // named by GITHUB_OUTPUT.
 func TestSetOutput(t *testing.T) {
