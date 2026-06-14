@@ -78,9 +78,15 @@ func (s *Scanner) ListAvailable(ctx context.Context, projectDir string) ([]depen
 			continue
 		}
 
+		wanted := currentStr
+		if entry.LatestStatus == "semver-safe-update" {
+			wanted = latestStr
+		}
+
 		updates = append(updates, dependency.UpdateInfo{
 			Name:       entry.Name,
 			Current:    currentStr,
+			Wanted:     wanted,
 			Latest:     latestStr,
 			UpdateType: string(updateType),
 		})

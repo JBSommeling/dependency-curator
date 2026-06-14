@@ -65,12 +65,7 @@ func (s *AuditScanner) Scan(ctx context.Context, projectDir string) ([]dependenc
 			}
 
 			severity := "unknown"
-			// Composer audit doesn't provide severity directly,
-			// but we can infer from source (GitHub advisories have it)
-			// Default to "high" for safety
-			if id != "" {
-				severity = "high"
-			}
+			// Composer audit doesn't provide severity directly.
 
 			advisories = append(advisories, dependency.AdvisoryInfo{
 				ID:               id,
