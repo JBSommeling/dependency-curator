@@ -344,6 +344,115 @@ func TestRunWithDeps_NoEcosystems(t *testing.T) {
 	}
 }
 
+// TestRunWithDeps_GoModOnly verifies that when only go.mod is present
+// the orchestrator detects the gomod ecosystem and creates a PR.
+func TestRunWithDeps_GoModOnly(t *testing.T) {
+	dir := t.TempDir()
+	goMod := `module example.com/myproject
+
+go 1.24
+
+require (
+	github.com/pkg/errors v0.9.1
+	golang.org/x/text v0.14.0
+)
+`
+	os.WriteFile(filepath.Join(dir, "go.mod"), []byte(goMod), 0644)
+	os.WriteFile(filepath.Join(dir, "go.sum"), []byte(""), 0644)
+
+	goListOutput := `{"Path":"example.com/myproject","Version":"","Main":true}
+{"Path":"github.com/pkg/errors","Version":"v0.9.1","Update":{"Version":"v0.9.2"},"Indirect":false}
+{"Path":"golang.org/x/text","Version":"v0.14.0","Update":{"Version":"v0.21.0"},"Indirect":false}
+`
+
+	ghMock := &mockGHClient{
+		defaultBranch: "main",
+		baseSHA:       "abc123",
+		createdPR:     1,
+		createdPRURL:  "https://github.com/test/repo/pull/1",
+		commitSHA:     "def456",
+	}
+
+	runner := &mockCmdRunner{responses: map[string]mockResponse{
+		"go list -m -u -json all":             {output: []byte(goListOutput)},
+		"govulncheck -json ./...":              {output: []byte("")},
+		"go get github.com/pkg/errors@v0.9.2": {output: nil},
+		"go mod tidy":                          {output: nil},
+	}}
+
+	d := &deps{runner: runner, ghClient: ghMock, httpClient: &mockHTTPClient{}}
+
+	if err := runWithDeps(baseCfg(dir), d); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ghMock.createBranchCalled {
+		t.Error("should create branch for updates")
+	}
+	if !ghMock.commitFilesCalled {
+		t.Error("should commit patch updates")
+	}
+	if !ghMock.createPRCalled {
+		t.Error("should create PR for minor/major updates")
+	}
+}
+
+// TestRunWithDeps_AllEcosystems verifies that npm, composer, and gomod
+// can all be detected and combined into a single PR.
+func TestRunWithDeps_AllEcosystems(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "package.json"), []byte(`{
+		"name":"test","version":"1.0.0",
+		"dependencies":{"axios":"^1.6.0"}
+	}`), 0644)
+	os.WriteFile(filepath.Join(dir, "package-lock.json"), []byte(`{"lockfileVersion":3}`), 0644)
+	os.WriteFile(filepath.Join(dir, "composer.json"), []byte(`{
+		"name":"test/project",
+		"require":{"monolog/monolog":"^3.0.0"}
+	}`), 0644)
+	os.WriteFile(filepath.Join(dir, "composer.lock"), []byte(`{}`), 0644)
+	os.WriteFile(filepath.Join(dir, "go.mod"), []byte(`module example.com/test
+
+go 1.24
+
+require github.com/pkg/errors v0.9.1
+`), 0644)
+	os.WriteFile(filepath.Join(dir, "go.sum"), []byte(""), 0644)
+
+	ghMock := &mockGHClient{
+		defaultBranch: "main",
+		baseSHA:       "abc123",
+		createdPR:     1,
+		createdPRURL:  "https://github.com/test/repo/pull/1",
+		commitSHA:     "def456",
+	}
+
+	runner := &mockCmdRunner{responses: map[string]mockResponse{
+		"npm outdated --json":                      {output: []byte(`{"axios":{"current":"1.6.0","wanted":"1.6.8","latest":"1.6.8"}}`)},
+		"npm audit --json":                         {output: []byte(`{"vulnerabilities":{}}`)},
+		"npm install -- axios@1.6.8":               {output: nil},
+		"composer outdated --format=json --direct": {output: []byte(`{"installed":[{"name":"monolog/monolog","version":"3.0.0","latest":"3.5.0","latest-status":"semver-safe-update"}]}`)},
+		"composer audit --format=json":             {output: []byte(`{"advisories":{}}`)},
+		"go list -m -u -json all": {output: []byte(`{"Path":"example.com/test","Version":"","Main":true}
+{"Path":"github.com/pkg/errors","Version":"v0.9.1","Update":{"Version":"v0.9.2"},"Indirect":false}
+`)},
+		"govulncheck -json ./...":             {output: []byte("")},
+		"go get github.com/pkg/errors@v0.9.2": {output: nil},
+		"go mod tidy":                          {output: nil},
+	}}
+
+	d := &deps{runner: runner, ghClient: ghMock, httpClient: &mockHTTPClient{}}
+
+	if err := runWithDeps(baseCfg(dir), d); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ghMock.createPRCalled {
+		t.Error("should create PR with combined updates from all ecosystems")
+	}
+	if !strings.Contains(ghMock.lastPRRequest.Body, "Dependency Curator Report") {
+		t.Error("PR body should contain report")
+	}
+}
+
 // TestSetOutput verifies that setOutput writes the key and value to the file
 // named by GITHUB_OUTPUT.
 func TestSetOutput(t *testing.T) {

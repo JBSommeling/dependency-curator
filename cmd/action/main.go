@@ -16,6 +16,7 @@ import (
 	"github.com/JBSommeling/dependency-curator/internal/dependency"
 	"github.com/JBSommeling/dependency-curator/internal/exec"
 	gh "github.com/JBSommeling/dependency-curator/internal/github"
+	"github.com/JBSommeling/dependency-curator/internal/gomod"
 	"github.com/JBSommeling/dependency-curator/internal/reporting"
 	"github.com/JBSommeling/dependency-curator/internal/scanner"
 	"github.com/JBSommeling/dependency-curator/internal/security"
@@ -128,6 +129,20 @@ func detectEcosystems(projectDir string, runner exec.CommandRunner, includeDev b
 		})
 	}
 
+	if fileExists(filepath.Join(projectDir, "go.mod")) {
+		goScanner := gomod.NewScanner(runner)
+		goSecurity := gomod.NewVulnScanner(runner)
+		goUpdater := gomod.NewUpdater(runner)
+		ecosystems = append(ecosystems, ecosystem{
+			name:          "gomod",
+			provider:      gomod.NewProvider(),
+			listUpdates:   goScanner.ListAvailable,
+			scanVulns:     goSecurity.Scan,
+			applyPatches:  goUpdater.ApplyPatches,
+			manifestFiles: []string{"go.mod", "go.sum"},
+		})
+	}
+
 	return ecosystems
 }
 
@@ -194,8 +209,9 @@ func runWithDeps(cfg *config.Config, d *deps) error {
 		advisories, err := eco.scanVulns(ctx, cfg.ProjectDir)
 		if err != nil {
 			log.Printf("[%s] warning: vulnerability scan failed: %v", eco.name, err)
+		} else {
+			log.Printf("[%s] found %d advisories", eco.name, len(advisories))
 		}
-		log.Printf("[%s] found %d advisories", eco.name, len(advisories))
 
 		enriched := dependency.Enrich(discovered, updates, advisories)
 		allDeps = append(allDeps, enriched...)
@@ -257,7 +273,7 @@ func runWithDeps(cfg *config.Config, d *deps) error {
 	if cfg.AutoPatch {
 		for _, pg := range patchGroups {
 			log.Printf("[%s] applying %d patch updates", pg.eco.name, len(pg.patches))
-			applied, applyErr := pg.eco.applyPatches(ctx, cfg.ProjectDir, allDeps)
+			applied, applyErr := pg.eco.applyPatches(ctx, cfg.ProjectDir, pg.patches)
 			if applyErr != nil {
 				log.Printf("[%s] warning: some patches failed: %v", pg.eco.name, applyErr)
 				continue
