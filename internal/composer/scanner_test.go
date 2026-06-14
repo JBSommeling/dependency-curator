@@ -207,6 +207,38 @@ func TestListAvailable_InvalidJSON(t *testing.T) {
 	}
 }
 
+func TestListAvailable_RawArrayFormat(t *testing.T) {
+	// Some Composer versions return a raw array instead of {"installed": [...]}
+	rawArray := `[
+		{"name": "monolog/monolog", "version": "2.0.0", "latest": "2.0.1", "latest-status": "semver-safe-update"},
+		{"name": "symfony/console", "version": "5.0.0", "latest": "6.0.0", "latest-status": "update-possible"}
+	]`
+
+	runner := &mockRunner{
+		output: []byte(rawArray),
+	}
+
+	s := NewScanner(runner, true)
+	updates, err := s.ListAvailable(context.Background(), "/test")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if len(updates) != 2 {
+		t.Fatalf("expected 2 updates, got %d", len(updates))
+	}
+
+	if updates[0].Name != "monolog/monolog" {
+		t.Errorf("updates[0].Name = %q, want monolog/monolog", updates[0].Name)
+	}
+	if updates[0].UpdateType != "patch" {
+		t.Errorf("updates[0].UpdateType = %q, want patch", updates[0].UpdateType)
+	}
+	if updates[1].Name != "symfony/console" {
+		t.Errorf("updates[1].Name = %q, want symfony/console", updates[1].Name)
+	}
+}
+
 func TestListAvailable_VersionWithVPrefix(t *testing.T) {
 	runner := &mockRunner{
 		output: []byte(`{
