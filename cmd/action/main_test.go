@@ -175,9 +175,10 @@ func TestRunWithDeps_WithUpdates(t *testing.T) {
 	}
 
 	runner := &mockCmdRunner{responses: map[string]mockResponse{
-		"npm outdated --json":      {output: []byte(npmOutdated)},
-		"npm audit --json":         {output: []byte(`{"vulnerabilities":{}}`)},
-		"npm install axios@1.6.8":  {output: nil},
+		"npm install --ignore-scripts --no-audit": {output: nil},
+		"npm outdated --json":                     {output: []byte(npmOutdated)},
+		"npm audit --json":                        {output: []byte(`{"vulnerabilities":{}}`)},
+		"npm install axios@1.6.8":                 {output: nil},
 	}}
 
 	d := &deps{runner: runner, ghClient: ghMock, httpClient: &mockHTTPClient{}}
@@ -218,8 +219,9 @@ func TestRunWithDeps_ExistingPR(t *testing.T) {
 	}
 
 	runner := &mockCmdRunner{responses: map[string]mockResponse{
-		"npm outdated --json": {output: []byte(npmOutdated)},
-		"npm audit --json":    {output: []byte(`{"vulnerabilities":{}}`)},
+		"npm install --ignore-scripts --no-audit": {output: nil},
+		"npm outdated --json":                     {output: []byte(npmOutdated)},
+		"npm audit --json":                        {output: []byte(`{"vulnerabilities":{}}`)},
 	}}
 
 	d := &deps{runner: runner, ghClient: ghMock, httpClient: &mockHTTPClient{}}
@@ -265,8 +267,9 @@ func TestRunWithDeps_ComposerOnly(t *testing.T) {
 	}
 
 	runner := &mockCmdRunner{responses: map[string]mockResponse{
-		"composer outdated --format=json --direct": {output: []byte(composerOutdated)},
-		"composer audit --format=json":             {output: []byte(`{"advisories":{}}`)},
+		"composer install --no-scripts --no-interaction":  {output: nil},
+		"composer outdated --format=json --direct":        {output: []byte(composerOutdated)},
+		"composer audit --format=json":                    {output: []byte(`{"advisories":{}}`)},
 		"composer update --with guzzlehttp/guzzle:7.5.3": {output: nil},
 	}}
 
@@ -307,11 +310,13 @@ func TestRunWithDeps_MixedEcosystems(t *testing.T) {
 	}
 
 	runner := &mockCmdRunner{responses: map[string]mockResponse{
-		"npm outdated --json":                      {output: []byte(`{"axios":{"current":"1.6.0","wanted":"1.6.8","latest":"1.6.8"}}`)},
-		"npm audit --json":                         {output: []byte(`{"vulnerabilities":{}}`)},
-		"npm install -- axios@1.6.8":               {output: nil},
-		"composer outdated --format=json --direct": {output: []byte(`{"installed":[{"name":"monolog/monolog","version":"3.0.0","latest":"3.5.0","latest-status":"semver-safe-update"}]}`)},
-		"composer audit --format=json":             {output: []byte(`{"advisories":{}}`)},
+		"npm install --ignore-scripts --no-audit":         {output: nil},
+		"npm outdated --json":                             {output: []byte(`{"axios":{"current":"1.6.0","wanted":"1.6.8","latest":"1.6.8"}}`)},
+		"npm audit --json":                                {output: []byte(`{"vulnerabilities":{}}`)},
+		"npm install -- axios@1.6.8":                     {output: nil},
+		"composer install --no-scripts --no-interaction": {output: nil},
+		"composer outdated --format=json --direct":       {output: []byte(`{"installed":[{"name":"monolog/monolog","version":"3.0.0","latest":"3.5.0","latest-status":"semver-safe-update"}]}`)},
+		"composer audit --format=json":                   {output: []byte(`{"advisories":{}}`)},
 	}}
 
 	d := &deps{runner: runner, ghClient: ghMock, httpClient: &mockHTTPClient{}}
@@ -374,10 +379,11 @@ require (
 	}
 
 	runner := &mockCmdRunner{responses: map[string]mockResponse{
+		"go mod download":                     {output: nil},
 		"go list -m -u -json all":             {output: []byte(goListOutput)},
-		"govulncheck -json ./...":              {output: []byte("")},
+		"govulncheck -json ./...":             {output: []byte("")},
 		"go get github.com/pkg/errors@v0.9.2": {output: nil},
-		"go mod tidy":                          {output: nil},
+		"go mod tidy":                         {output: nil},
 	}}
 
 	d := &deps{runner: runner, ghClient: ghMock, httpClient: &mockHTTPClient{}}
@@ -427,15 +433,18 @@ require github.com/pkg/errors v0.9.1
 	}
 
 	runner := &mockCmdRunner{responses: map[string]mockResponse{
-		"npm outdated --json":                      {output: []byte(`{"axios":{"current":"1.6.0","wanted":"1.6.8","latest":"1.6.8"}}`)},
-		"npm audit --json":                         {output: []byte(`{"vulnerabilities":{}}`)},
-		"npm install -- axios@1.6.8":               {output: nil},
-		"composer outdated --format=json --direct": {output: []byte(`{"installed":[{"name":"monolog/monolog","version":"3.0.0","latest":"3.5.0","latest-status":"semver-safe-update"}]}`)},
-		"composer audit --format=json":             {output: []byte(`{"advisories":{}}`)},
+		"npm install --ignore-scripts --no-audit":         {output: nil},
+		"npm outdated --json":                             {output: []byte(`{"axios":{"current":"1.6.0","wanted":"1.6.8","latest":"1.6.8"}}`)},
+		"npm audit --json":                                {output: []byte(`{"vulnerabilities":{}}`)},
+		"npm install -- axios@1.6.8":                     {output: nil},
+		"composer install --no-scripts --no-interaction": {output: nil},
+		"composer outdated --format=json --direct":       {output: []byte(`{"installed":[{"name":"monolog/monolog","version":"3.0.0","latest":"3.5.0","latest-status":"semver-safe-update"}]}`)},
+		"composer audit --format=json":                   {output: []byte(`{"advisories":{}}`)},
+		"go mod download":                                 {output: nil},
 		"go list -m -u -json all": {output: []byte(`{"Path":"example.com/test","Version":"","Main":true}
 {"Path":"github.com/pkg/errors","Version":"v0.9.1","Update":{"Version":"v0.9.2"},"Indirect":false}
 `)},
-		"govulncheck -json ./...":             {output: []byte("")},
+		"govulncheck -json ./...":              {output: []byte("")},
 		"go get github.com/pkg/errors@v0.9.2": {output: nil},
 		"go mod tidy":                          {output: nil},
 	}}

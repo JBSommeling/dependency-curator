@@ -45,6 +45,7 @@ type deps struct {
 type ecosystem struct {
 	name          string
 	provider      dependency.Provider
+	install       func(ctx context.Context, dir string) error // install deps before scanning
 	listUpdates   func(ctx context.Context, dir string) ([]dependency.UpdateInfo, error)
 	scanVulns     func(ctx context.Context, dir string) ([]dependency.AdvisoryInfo, error)
 	applyPatches  func(ctx context.Context, dir string, deps []dependency.Dependency) ([]dependency.Dependency, error)
@@ -81,6 +82,10 @@ func detectEcosystems(projectDir string, runner exec.CommandRunner, includeDev b
 		ecosystems = append(ecosystems, ecosystem{
 			name:     "npm",
 			provider: dependency.NewPackageJSONProvider(),
+			install: func(ctx context.Context, dir string) error {
+				_, err := runner.Run(ctx, dir, "npm", "install", "--ignore-scripts", "--no-audit")
+				return err
+			},
 			listUpdates: func(ctx context.Context, dir string) ([]dependency.UpdateInfo, error) {
 				updates, err := npmScanner.ListAvailable(ctx, dir)
 				if err != nil {
@@ -120,8 +125,12 @@ func detectEcosystems(projectDir string, runner exec.CommandRunner, includeDev b
 		composerSecurity := composer.NewAuditScanner(runner, includeDev)
 		composerUpdater := composer.NewUpdater(runner)
 		ecosystems = append(ecosystems, ecosystem{
-			name:          "composer",
-			provider:      composer.NewComposerProvider(),
+			name:     "composer",
+			provider: composer.NewComposerProvider(),
+			install: func(ctx context.Context, dir string) error {
+				_, err := runner.Run(ctx, dir, "composer", "install", "--no-scripts", "--no-interaction")
+				return err
+			},
 			listUpdates:   composerScanner.ListAvailable,
 			scanVulns:     composerSecurity.Scan,
 			applyPatches:  composerUpdater.ApplyPatches,
@@ -134,8 +143,12 @@ func detectEcosystems(projectDir string, runner exec.CommandRunner, includeDev b
 		goSecurity := gomod.NewVulnScanner(runner)
 		goUpdater := gomod.NewUpdater(runner)
 		ecosystems = append(ecosystems, ecosystem{
-			name:          "gomod",
-			provider:      gomod.NewProvider(),
+			name:     "gomod",
+			provider: gomod.NewProvider(),
+			install: func(ctx context.Context, dir string) error {
+				_, err := runner.Run(ctx, dir, "go", "mod", "download")
+				return err
+			},
 			listUpdates:   goScanner.ListAvailable,
 			scanVulns:     goSecurity.Scan,
 			applyPatches:  goUpdater.ApplyPatches,
@@ -198,6 +211,11 @@ func runWithDeps(cfg *config.Config, d *deps) error {
 
 		if len(discovered) == 0 {
 			continue
+		}
+
+		log.Printf("[%s] installing dependencies", eco.name)
+		if err := eco.install(ctx, cfg.ProjectDir); err != nil {
+			return fmt.Errorf("[%s] installing dependencies: %w", eco.name, err)
 		}
 
 		updates, err := eco.listUpdates(ctx, cfg.ProjectDir)
