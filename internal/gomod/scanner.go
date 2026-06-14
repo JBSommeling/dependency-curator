@@ -67,11 +67,11 @@ func (s *Scanner) ListAvailable(ctx context.Context, projectDir string) ([]depen
 
 		currentVer, err := semver.Parse(current)
 		if err != nil {
-			return nil, fmt.Errorf("parsing current version %q for %s: %w", current, mod.Path, err)
+			continue
 		}
 		latestVer, err := semver.Parse(latest)
 		if err != nil {
-			return nil, fmt.Errorf("parsing latest version %q for %s: %w", latest, mod.Path, err)
+			continue
 		}
 
 		updateType := semver.ClassifyUpdate(currentVer, latestVer)

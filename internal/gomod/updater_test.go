@@ -53,16 +53,25 @@ func TestUpdater_ApplyPatches_NoPatchDeps(t *testing.T) {
 func TestUpdater_ApplyPatches_FailOnUpdate(t *testing.T) {
 	runner := &mockRunner{responses: map[string]mockResp{
 		"go get github.com/pkg/errors@v0.9.2": {err: errors.New("network error")},
+		"go get github.com/other/pkg@v1.0.1":  {output: nil},
+		"go mod tidy":                          {output: nil},
 	}}
 
 	u := NewUpdater(runner)
 	deps := []dependency.Dependency{
 		{Name: "github.com/pkg/errors", LatestVersion: "0.9.2", UpdateType: "patch"},
+		{Name: "github.com/other/pkg", LatestVersion: "1.0.1", UpdateType: "patch"},
 	}
 
-	_, err := u.ApplyPatches(context.Background(), "/test", deps)
+	applied, err := u.ApplyPatches(context.Background(), "/test", deps)
 	if err == nil {
-		t.Error("expected error on update failure")
+		t.Error("expected error for failed update")
+	}
+	if len(applied) != 1 {
+		t.Errorf("expected 1 applied (partial success), got %d", len(applied))
+	}
+	if len(applied) > 0 && applied[0].Name != "github.com/other/pkg" {
+		t.Errorf("applied[0].Name = %q, want github.com/other/pkg", applied[0].Name)
 	}
 }
 
@@ -81,7 +90,10 @@ func TestUpdater_ApplyPatches_FailOnTidy(t *testing.T) {
 	if err == nil {
 		t.Error("expected error on tidy failure")
 	}
-	if applied != nil {
-		t.Errorf("applied should be nil on tidy failure, got %+v", applied)
+	if len(applied) != 1 {
+		t.Errorf("expected 1 applied (tidy can fail after successful updates), got %d", len(applied))
+	}
+	if len(applied) > 0 && applied[0].Name != "github.com/pkg/errors" {
+		t.Errorf("applied[0].Name = %q, want github.com/pkg/errors", applied[0].Name)
 	}
 }

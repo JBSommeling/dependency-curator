@@ -14,6 +14,8 @@ RUN apk add --no-cache php83 php83-phar php83-mbstring php83-openssl php83-curl 
 ENV GOPATH=/root/go
 ENV PATH=$GOPATH/bin:$PATH
 
+RUN go install golang.org/x/vuln/cmd/govulncheck@latest
+
 COPY --from=builder /dependency-curator /usr/local/bin/dependency-curator
 
 ENTRYPOINT ["dependency-curator"]

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strings"
 
 	"github.com/JBSommeling/dependency-curator/internal/dependency"
@@ -72,6 +73,7 @@ func (s *VulnScanner) Scan(ctx context.Context, projectDir string) ([]dependency
 	for decoder.More() {
 		var msg govulnMessage
 		if err := decoder.Decode(&msg); err != nil {
+			log.Printf("warning: skipping malformed govulncheck entry: %v", err)
 			continue
 		}
 

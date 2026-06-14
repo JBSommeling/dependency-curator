@@ -276,7 +276,6 @@ func runWithDeps(cfg *config.Config, d *deps) error {
 			applied, applyErr := pg.eco.applyPatches(ctx, cfg.ProjectDir, pg.patches)
 			if applyErr != nil {
 				log.Printf("[%s] warning: some patches failed: %v", pg.eco.name, applyErr)
-				continue
 			}
 			count := len(applied)
 			if count > 0 {
@@ -306,7 +305,7 @@ func runWithDeps(cfg *config.Config, d *deps) error {
 		clProvider := changelog.NewNpmRegistryProvider(d.httpClient)
 		changelogs := make(map[string]*changelog.ChangelogInfo)
 		for _, dep := range allDeps {
-			if dep.UpdateType == "major" {
+			if dep.UpdateType == "major" && isNpmPackage(dep.Name) {
 				cl, err := clProvider.FetchChangelog(ctx, dep.Name, dep.CurrentVersion, dep.LatestVersion)
 				if err != nil {
 					log.Printf("warning: changelog fetch failed for %s: %v", dep.Name, err)
@@ -366,6 +365,10 @@ func runWithDeps(cfg *config.Config, d *deps) error {
 
 	log.Println("dependency curator completed successfully")
 	return nil
+}
+
+func isNpmPackage(name string) bool {
+	return !strings.Contains(name, "/") || strings.HasPrefix(name, "@")
 }
 
 func ecosystemNames(ecosystems []ecosystem) string {
