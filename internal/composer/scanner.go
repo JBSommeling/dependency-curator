@@ -46,13 +46,17 @@ func (s *Scanner) ListAvailable(ctx context.Context, projectDir string) ([]depen
 		return nil, nil
 	}
 
+	var entries []composerOutdatedEntry
+	// Composer versions differ: some return {"installed": [...]}, others return [...] directly
 	var outdated composerOutdatedOutput
-	if err := json.Unmarshal(output, &outdated); err != nil {
+	if err := json.Unmarshal(output, &outdated); err == nil && outdated.Installed != nil {
+		entries = outdated.Installed
+	} else if err := json.Unmarshal(output, &entries); err != nil {
 		return nil, fmt.Errorf("parsing composer outdated output: %w", err)
 	}
 
 	var updates []dependency.UpdateInfo
-	for _, entry := range outdated.Installed {
+	for _, entry := range entries {
 		if entry.Version == "" || entry.Latest == "" {
 			continue
 		}

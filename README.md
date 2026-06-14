@@ -34,7 +34,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: JBSommeling/dependency-curator@v1
+      - uses: JBSommeling/dependency-curator@v1.1.1
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
 ```
