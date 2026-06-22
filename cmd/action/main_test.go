@@ -208,6 +208,9 @@ func TestRunWithDeps_ExistingPR(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(pkgJSON), 0644); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.WriteFile(filepath.Join(dir, "package-lock.json"), []byte(`{"lockfileVersion":3}`), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	npmOutdated := `{"express":{"current":"4.17.0","wanted":"4.17.1","latest":"4.18.2"}}`
 
@@ -216,12 +219,14 @@ func TestRunWithDeps_ExistingPR(t *testing.T) {
 		baseSHA:       "abc123",
 		branchExists:  true,
 		existingPR:    42,
+		commitSHA:     "def456",
 	}
 
 	runner := &mockCmdRunner{responses: map[string]mockResponse{
 		"npm install --ignore-scripts --no-audit": {output: nil},
 		"npm outdated --json":                     {output: []byte(npmOutdated)},
 		"npm audit --json":                        {output: []byte(`{"vulnerabilities":{}}`)},
+		"npm install -- express@4.18.2":           {output: nil},
 	}}
 
 	d := &deps{runner: runner, ghClient: ghMock, httpClient: &mockHTTPClient{}}

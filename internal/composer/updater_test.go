@@ -202,3 +202,98 @@ func TestApplyPatches_EmptyLatestVersion(t *testing.T) {
 		t.Errorf("expected no runner calls, got %d", len(runner.calls))
 	}
 }
+
+func TestApplyUpdates_MinorUpdate(t *testing.T) {
+	runner := &callTrackingRunner{}
+	u := NewUpdater(runner)
+
+	deps := []dependency.Dependency{
+		{Name: "vendor/foo", CurrentVersion: "1.0.0", LatestVersion: "1.1.0", UpdateType: "minor"},
+	}
+
+	applied, err := u.ApplyUpdates(context.Background(), "/project", deps)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(applied) != 1 {
+		t.Fatalf("expected 1 applied, got %d", len(applied))
+	}
+	if len(runner.calls) != 1 {
+		t.Fatalf("expected 1 runner call, got %d", len(runner.calls))
+	}
+	call := runner.calls[0]
+	if call.name != "composer" {
+		t.Errorf("expected name composer, got %s", call.name)
+	}
+	wantArgs := []string{"update", "--with", "vendor/foo:1.1.0"}
+	if len(call.args) != len(wantArgs) {
+		t.Fatalf("expected args %v, got %v", wantArgs, call.args)
+	}
+	for i, a := range wantArgs {
+		if call.args[i] != a {
+			t.Errorf("arg[%d]: expected %q, got %q", i, a, call.args[i])
+		}
+	}
+}
+
+func TestApplyUpdates_MajorUpdate(t *testing.T) {
+	runner := &callTrackingRunner{}
+	u := NewUpdater(runner)
+
+	deps := []dependency.Dependency{
+		{Name: "vendor/bar", CurrentVersion: "1.0.0", LatestVersion: "2.0.0", UpdateType: "major"},
+	}
+
+	applied, err := u.ApplyUpdates(context.Background(), "/project", deps)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(applied) != 1 {
+		t.Fatalf("expected 1 applied, got %d", len(applied))
+	}
+	if applied[0].Name != "vendor/bar" {
+		t.Errorf("expected vendor/bar, got %s", applied[0].Name)
+	}
+}
+
+func TestApplyUpdates_MixedTypes(t *testing.T) {
+	runner := &callTrackingRunner{}
+	u := NewUpdater(runner)
+
+	deps := []dependency.Dependency{
+		{Name: "vendor/patch-pkg", CurrentVersion: "1.0.0", LatestVersion: "1.0.1", UpdateType: "patch"},
+		{Name: "vendor/minor-pkg", CurrentVersion: "1.0.0", LatestVersion: "1.1.0", UpdateType: "minor"},
+		{Name: "vendor/major-pkg", CurrentVersion: "1.0.0", LatestVersion: "2.0.0", UpdateType: "major"},
+	}
+
+	applied, err := u.ApplyUpdates(context.Background(), "/project", deps)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(applied) != 3 {
+		t.Errorf("expected 3 applied deps (all types), got %d", len(applied))
+	}
+	if len(runner.calls) != 3 {
+		t.Errorf("expected 3 runner calls, got %d", len(runner.calls))
+	}
+}
+
+func TestApplyUpdates_EmptyLatestVersion(t *testing.T) {
+	runner := &callTrackingRunner{}
+	u := NewUpdater(runner)
+
+	deps := []dependency.Dependency{
+		{Name: "vendor/foo", CurrentVersion: "1.0.0", LatestVersion: "", UpdateType: "minor"},
+	}
+
+	applied, err := u.ApplyUpdates(context.Background(), "/project", deps)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if applied != nil {
+		t.Errorf("expected nil applied, got %v", applied)
+	}
+	if len(runner.calls) != 0 {
+		t.Errorf("expected no runner calls, got %d", len(runner.calls))
+	}
+}

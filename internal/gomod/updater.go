@@ -16,15 +16,14 @@ func NewUpdater(runner exec.CommandRunner) *Updater {
 	return &Updater{runner: runner}
 }
 
-func (u *Updater) ApplyPatches(ctx context.Context, projectDir string, deps []dependency.Dependency) ([]dependency.Dependency, error) {
+func (u *Updater) ApplyUpdates(ctx context.Context, projectDir string, deps []dependency.Dependency) ([]dependency.Dependency, error) {
 	var applied []dependency.Dependency
 	var firstErr error
 
 	for _, dep := range deps {
-		if dep.UpdateType != "patch" {
+		if dep.LatestVersion == "" {
 			continue
 		}
-
 		target := dep.Name + "@v" + dep.LatestVersion
 		if _, err := u.runner.Run(ctx, projectDir, "go", "get", target); err != nil {
 			if firstErr == nil {
@@ -42,4 +41,14 @@ func (u *Updater) ApplyPatches(ctx context.Context, projectDir string, deps []de
 	}
 
 	return applied, firstErr
+}
+
+func (u *Updater) ApplyPatches(ctx context.Context, projectDir string, deps []dependency.Dependency) ([]dependency.Dependency, error) {
+	var patches []dependency.Dependency
+	for _, dep := range deps {
+		if dep.UpdateType == "patch" {
+			patches = append(patches, dep)
+		}
+	}
+	return u.ApplyUpdates(ctx, projectDir, patches)
 }

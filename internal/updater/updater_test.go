@@ -213,3 +213,96 @@ func TestApplyPatches_EmptyLatestVersion(t *testing.T) {
 		t.Errorf("expected no runner calls, got %d", len(runner.calls))
 	}
 }
+
+func TestApplyUpdates_MinorUpdate(t *testing.T) {
+	runner := &mockRunner{}
+	u := New(runner)
+
+	deps := []dependency.Dependency{
+		{Name: "express", CurrentVersion: "4.0.0", LatestVersion: "4.1.0", UpdateType: "minor"},
+	}
+
+	applied, err := u.ApplyUpdates(context.Background(), "/project", deps)
+
+	if err != nil {
+		t.Errorf("expected no error, got %v", err)
+	}
+	if len(applied) != 1 {
+		t.Fatalf("expected 1 applied dep, got %d", len(applied))
+	}
+	if len(runner.calls) != 1 {
+		t.Fatalf("expected 1 runner call, got %d", len(runner.calls))
+	}
+	call := runner.calls[0]
+	if call.name != "npm" {
+		t.Errorf("expected command npm, got %s", call.name)
+	}
+	if len(call.args) != 3 || call.args[0] != "install" || call.args[1] != "--" || call.args[2] != "express@4.1.0" {
+		t.Errorf("expected args [install -- express@4.1.0], got %v", call.args)
+	}
+}
+
+func TestApplyUpdates_MajorUpdate(t *testing.T) {
+	runner := &mockRunner{}
+	u := New(runner)
+
+	deps := []dependency.Dependency{
+		{Name: "lodash", CurrentVersion: "3.0.0", LatestVersion: "4.0.0", UpdateType: "major"},
+	}
+
+	applied, err := u.ApplyUpdates(context.Background(), "/project", deps)
+
+	if err != nil {
+		t.Errorf("expected no error, got %v", err)
+	}
+	if len(applied) != 1 {
+		t.Fatalf("expected 1 applied dep, got %d", len(applied))
+	}
+	if applied[0].Name != "lodash" {
+		t.Errorf("expected lodash to be applied, got %s", applied[0].Name)
+	}
+}
+
+func TestApplyUpdates_MixedTypes(t *testing.T) {
+	runner := &mockRunner{}
+	u := New(runner)
+
+	deps := []dependency.Dependency{
+		{Name: "patch-pkg", CurrentVersion: "1.0.0", LatestVersion: "1.0.1", UpdateType: "patch"},
+		{Name: "minor-pkg", CurrentVersion: "1.0.0", LatestVersion: "1.1.0", UpdateType: "minor"},
+		{Name: "major-pkg", CurrentVersion: "1.0.0", LatestVersion: "2.0.0", UpdateType: "major"},
+	}
+
+	applied, err := u.ApplyUpdates(context.Background(), "/project", deps)
+
+	if err != nil {
+		t.Errorf("expected no error, got %v", err)
+	}
+	if len(applied) != 3 {
+		t.Errorf("expected 3 applied deps (all types), got %d", len(applied))
+	}
+	if len(runner.calls) != 3 {
+		t.Errorf("expected 3 runner calls, got %d", len(runner.calls))
+	}
+}
+
+func TestApplyUpdates_EmptyLatestVersion(t *testing.T) {
+	runner := &mockRunner{}
+	u := New(runner)
+
+	deps := []dependency.Dependency{
+		{Name: "a", CurrentVersion: "1.0.0", LatestVersion: "", UpdateType: "minor"},
+	}
+
+	applied, err := u.ApplyUpdates(context.Background(), "/project", deps)
+
+	if err != nil {
+		t.Errorf("expected no error, got %v", err)
+	}
+	if applied != nil {
+		t.Errorf("expected nil applied, got %v", applied)
+	}
+	if len(runner.calls) != 0 {
+		t.Errorf("expected no runner calls, got %d", len(runner.calls))
+	}
+}

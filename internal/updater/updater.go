@@ -17,22 +17,22 @@ func New(runner exec.CommandRunner) *Updater {
 	return &Updater{runner: runner}
 }
 
-func (u *Updater) ApplyPatches(ctx context.Context, projectDir string, deps []dependency.Dependency) ([]dependency.Dependency, error) {
-	var patches []dependency.Dependency
+func (u *Updater) ApplyUpdates(ctx context.Context, projectDir string, deps []dependency.Dependency) ([]dependency.Dependency, error) {
+	var targets []dependency.Dependency
 	for _, d := range deps {
-		if d.UpdateType == "patch" && d.LatestVersion != "" {
-			patches = append(patches, d)
+		if d.LatestVersion != "" {
+			targets = append(targets, d)
 		}
 	}
 
-	if len(patches) == 0 {
+	if len(targets) == 0 {
 		return nil, nil
 	}
 
 	var errs []string
 	var applied []dependency.Dependency
 
-	for _, d := range patches {
+	for _, d := range targets {
 		pkg := d.Name + "@" + d.LatestVersion
 		_, err := u.runner.Run(ctx, projectDir, "npm", "install", "--", pkg)
 		if err != nil {
@@ -43,8 +43,18 @@ func (u *Updater) ApplyPatches(ctx context.Context, projectDir string, deps []de
 	}
 
 	if len(errs) > 0 {
-		return applied, fmt.Errorf("some patches failed: %s", strings.Join(errs, "; "))
+		return applied, fmt.Errorf("some updates failed: %s", strings.Join(errs, "; "))
 	}
 
 	return applied, nil
+}
+
+func (u *Updater) ApplyPatches(ctx context.Context, projectDir string, deps []dependency.Dependency) ([]dependency.Dependency, error) {
+	var patches []dependency.Dependency
+	for _, d := range deps {
+		if d.UpdateType == "patch" {
+			patches = append(patches, d)
+		}
+	}
+	return u.ApplyUpdates(ctx, projectDir, patches)
 }

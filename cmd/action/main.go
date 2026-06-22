@@ -49,6 +49,7 @@ type ecosystem struct {
 	listUpdates   func(ctx context.Context, dir string) ([]dependency.UpdateInfo, error)
 	scanVulns     func(ctx context.Context, dir string) ([]dependency.AdvisoryInfo, error)
 	applyPatches  func(ctx context.Context, dir string, deps []dependency.Dependency) ([]dependency.Dependency, error)
+	applyUpdates  func(ctx context.Context, dir string, deps []dependency.Dependency) ([]dependency.Dependency, error)
 	manifestFiles []string // files to commit after patching
 }
 
@@ -116,6 +117,7 @@ func detectEcosystems(projectDir string, runner exec.CommandRunner, includeDev b
 				return infos, nil
 			},
 			applyPatches:  npmUpdater.ApplyPatches,
+			applyUpdates:  npmUpdater.ApplyUpdates,
 			manifestFiles: []string{"package.json", "package-lock.json"},
 		})
 	}
@@ -134,6 +136,7 @@ func detectEcosystems(projectDir string, runner exec.CommandRunner, includeDev b
 			listUpdates:   composerScanner.ListAvailable,
 			scanVulns:     composerSecurity.Scan,
 			applyPatches:  composerUpdater.ApplyPatches,
+			applyUpdates:  composerUpdater.ApplyUpdates,
 			manifestFiles: []string{"composer.json", "composer.lock"},
 		})
 	}
@@ -152,6 +155,7 @@ func detectEcosystems(projectDir string, runner exec.CommandRunner, includeDev b
 			listUpdates:   goScanner.ListAvailable,
 			scanVulns:     goSecurity.Scan,
 			applyPatches:  goUpdater.ApplyPatches,
+			applyUpdates:  goUpdater.ApplyUpdates,
 			manifestFiles: []string{"go.mod", "go.sum"},
 		})
 	}
@@ -200,6 +204,7 @@ func runWithDeps(cfg *config.Config, d *deps) error {
 		patches []dependency.Dependency
 	}
 	var patchGroups []ecosystemPatches
+	var updateGroups []ecosystemPatches
 
 	for _, eco := range ecosystems {
 		log.Printf("[%s] discovering dependencies", eco.name)
@@ -245,6 +250,16 @@ func runWithDeps(cfg *config.Config, d *deps) error {
 		if len(patches) > 0 {
 			patchGroups = append(patchGroups, ecosystemPatches{eco: eco, patches: patches})
 		}
+
+		var minorMajorDeps []dependency.Dependency
+		for _, dep := range enriched {
+			if dep.UpdateType == "minor" || dep.UpdateType == "major" {
+				minorMajorDeps = append(minorMajorDeps, dep)
+			}
+		}
+		if len(minorMajorDeps) > 0 {
+			updateGroups = append(updateGroups, ecosystemPatches{eco: eco, patches: minorMajorDeps})
+		}
 	}
 
 	if len(allDeps) == 0 {
@@ -264,6 +279,7 @@ func runWithDeps(cfg *config.Config, d *deps) error {
 	}
 
 	patchesApplied := 0
+	committedToBranch := false
 	updateBranch := cfg.UpdateBranch()
 
 	// Ensure update branch exists
@@ -276,7 +292,7 @@ func runWithDeps(cfg *config.Config, d *deps) error {
 		if err := d.ghClient.CreateBranch(ctx, cfg.Owner, cfg.Repo, updateBranch, baseSHA); err != nil {
 			exists, existsErr := d.ghClient.BranchExists(ctx, cfg.Owner, cfg.Repo, updateBranch)
 			if existsErr != nil || !exists {
-				return fmt.Errorf("creating update branch: %w", err)
+				return fmt.Errorf("creating update branch %s: %w", updateBranch, err)
 			}
 			if err := d.ghClient.UpdateRef(ctx, cfg.Owner, cfg.Repo, "heads/"+updateBranch, baseSHA); err != nil {
 				return fmt.Errorf("updating branch ref: %w", err)
@@ -312,7 +328,36 @@ func runWithDeps(cfg *config.Config, d *deps) error {
 					return fmt.Errorf("[%s] committing patch updates: %w", pg.eco.name, err)
 				}
 				patchesApplied += count
+				committedToBranch = true
 				log.Printf("[%s] committed %d patch updates", pg.eco.name, count)
+			}
+		}
+	}
+
+	// Apply minor/major updates to the branch so the PR has real changes
+	if cfg.CreatePR {
+		for _, ug := range updateGroups {
+			log.Printf("[%s] applying %d minor/major updates", ug.eco.name, len(ug.patches))
+			applied, applyErr := ug.eco.applyUpdates(ctx, cfg.ProjectDir, ug.patches)
+			if applyErr != nil {
+				log.Printf("[%s] warning: some updates failed: %v", ug.eco.name, applyErr)
+			}
+			if len(applied) > 0 {
+				files := make(map[string][]byte)
+				for _, fname := range ug.eco.manifestFiles {
+					path := filepath.Join(cfg.ProjectDir, fname)
+					data, err := os.ReadFile(path)
+					if err != nil {
+						return fmt.Errorf("[%s] reading %s after minor/major updates: %w", ug.eco.name, fname, err)
+					}
+					files[fname] = data
+				}
+				msg := fmt.Sprintf("chore(deps): apply %s minor/major updates", ug.eco.name)
+				if _, err := d.ghClient.CommitFiles(ctx, cfg.Owner, cfg.Repo, updateBranch, msg, files); err != nil {
+					return fmt.Errorf("[%s] committing minor/major updates: %w", ug.eco.name, err)
+				}
+				committedToBranch = true
+				log.Printf("[%s] committed %d minor/major updates", ug.eco.name, len(applied))
 			}
 		}
 	}
@@ -320,51 +365,55 @@ func runWithDeps(cfg *config.Config, d *deps) error {
 	// Create/update PR for minor+major
 	var prURL string
 	if cfg.CreatePR && len(minorMajor) > 0 {
-		clProvider := changelog.NewNpmRegistryProvider(d.httpClient)
-		changelogs := make(map[string]*changelog.ChangelogInfo)
-		for _, dep := range allDeps {
-			if dep.UpdateType == "major" && isNpmPackage(dep.Name) {
-				cl, err := clProvider.FetchChangelog(ctx, dep.Name, dep.CurrentVersion, dep.LatestVersion)
-				if err != nil {
-					log.Printf("warning: changelog fetch failed for %s: %v", dep.Name, err)
-					continue
-				}
-				changelogs[dep.Name] = cl
-			}
-		}
-
-		prBody := reporting.GeneratePRBody(allDeps, changelogs)
-		title := fmt.Sprintf("chore(deps): %s dependency updates", cfg.ScheduleLabel)
-
-		prNumber, found, err := d.ghClient.FindOpenPR(ctx, cfg.Owner, cfg.Repo, updateBranch, baseBranch)
-		if err != nil {
-			return fmt.Errorf("finding existing PR: %w", err)
-		}
-
-		pr := gh.PRRequest{
-			Title: title,
-			Body:  prBody,
-			Head:  updateBranch,
-			Base:  baseBranch,
-		}
-
-		if found {
-			if err := d.ghClient.UpdatePR(ctx, cfg.Owner, cfg.Repo, prNumber, pr); err != nil {
-				return fmt.Errorf("updating PR: %w", err)
-			}
-			prURL = fmt.Sprintf("https://github.com/%s/%s/pull/%d", cfg.Owner, cfg.Repo, prNumber)
-			log.Printf("updated PR #%d", prNumber)
+		if !committedToBranch {
+			log.Printf("no changes committed to branch %s, skipping PR creation", updateBranch)
 		} else {
-			url, num, err := d.ghClient.CreatePR(ctx, cfg.Owner, cfg.Repo, pr)
-			if err != nil {
-				return fmt.Errorf("creating PR: %w", err)
+			clProvider := changelog.NewNpmRegistryProvider(d.httpClient)
+			changelogs := make(map[string]*changelog.ChangelogInfo)
+			for _, dep := range allDeps {
+				if dep.UpdateType == "major" && isNpmPackage(dep.Name) {
+					cl, err := clProvider.FetchChangelog(ctx, dep.Name, dep.CurrentVersion, dep.LatestVersion)
+					if err != nil {
+						log.Printf("warning: changelog fetch failed for %s: %v", dep.Name, err)
+						continue
+					}
+					changelogs[dep.Name] = cl
+				}
 			}
-			prURL = url
-			log.Printf("created PR #%d: %s", num, url)
 
-			if len(cfg.Labels) > 0 {
-				if err := d.ghClient.AddLabels(ctx, cfg.Owner, cfg.Repo, num, cfg.Labels); err != nil {
-					log.Printf("warning: failed to add labels: %v", err)
+			prBody := reporting.GeneratePRBody(allDeps, changelogs)
+			title := fmt.Sprintf("chore(deps): %s dependency updates", cfg.ScheduleLabel)
+
+			prNumber, found, err := d.ghClient.FindOpenPR(ctx, cfg.Owner, cfg.Repo, updateBranch, baseBranch)
+			if err != nil {
+				return fmt.Errorf("finding existing PR: %w", err)
+			}
+
+			pr := gh.PRRequest{
+				Title: title,
+				Body:  prBody,
+				Head:  updateBranch,
+				Base:  baseBranch,
+			}
+
+			if found {
+				if err := d.ghClient.UpdatePR(ctx, cfg.Owner, cfg.Repo, prNumber, pr); err != nil {
+					return fmt.Errorf("updating PR: %w", err)
+				}
+				prURL = fmt.Sprintf("https://github.com/%s/%s/pull/%d", cfg.Owner, cfg.Repo, prNumber)
+				log.Printf("updated PR #%d", prNumber)
+			} else {
+				url, num, err := d.ghClient.CreatePR(ctx, cfg.Owner, cfg.Repo, pr)
+				if err != nil {
+					return fmt.Errorf("creating PR: %w", err)
+				}
+				prURL = url
+				log.Printf("created PR #%d: %s", num, url)
+
+				if len(cfg.Labels) > 0 {
+					if err := d.ghClient.AddLabels(ctx, cfg.Owner, cfg.Repo, num, cfg.Labels); err != nil {
+						log.Printf("warning: failed to add labels: %v", err)
+					}
 				}
 			}
 		}
