@@ -128,7 +128,7 @@ func detectEcosystems(projectDir string, runner exec.CommandRunner, includeDev b
 			name:     "composer",
 			provider: composer.NewComposerProvider(),
 			install: func(ctx context.Context, dir string) error {
-				_, err := runner.Run(ctx, dir, "composer", "install", "--no-scripts", "--no-interaction")
+				_, err := runner.Run(ctx, dir, "composer", "install", "--no-scripts", "--no-interaction", "--ignore-platform-reqs")
 				return err
 			},
 			listUpdates:   composerScanner.ListAvailable,

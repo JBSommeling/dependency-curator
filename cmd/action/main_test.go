@@ -267,7 +267,7 @@ func TestRunWithDeps_ComposerOnly(t *testing.T) {
 	}
 
 	runner := &mockCmdRunner{responses: map[string]mockResponse{
-		"composer install --no-scripts --no-interaction":  {output: nil},
+		"composer install --no-scripts --no-interaction --ignore-platform-reqs":  {output: nil},
 		"composer outdated --format=json --direct":        {output: []byte(composerOutdated)},
 		"composer audit --format=json":                    {output: []byte(`{"advisories":{}}`)},
 		"composer update --with guzzlehttp/guzzle:7.5.3": {output: nil},
@@ -314,7 +314,7 @@ func TestRunWithDeps_MixedEcosystems(t *testing.T) {
 		"npm outdated --json":                             {output: []byte(`{"axios":{"current":"1.6.0","wanted":"1.6.8","latest":"1.6.8"}}`)},
 		"npm audit --json":                                {output: []byte(`{"vulnerabilities":{}}`)},
 		"npm install -- axios@1.6.8":                     {output: nil},
-		"composer install --no-scripts --no-interaction": {output: nil},
+		"composer install --no-scripts --no-interaction --ignore-platform-reqs": {output: nil},
 		"composer outdated --format=json --direct":       {output: []byte(`{"installed":[{"name":"monolog/monolog","version":"3.0.0","latest":"3.5.0","latest-status":"semver-safe-update"}]}`)},
 		"composer audit --format=json":                   {output: []byte(`{"advisories":{}}`)},
 	}}
@@ -437,7 +437,7 @@ require github.com/pkg/errors v0.9.1
 		"npm outdated --json":                             {output: []byte(`{"axios":{"current":"1.6.0","wanted":"1.6.8","latest":"1.6.8"}}`)},
 		"npm audit --json":                                {output: []byte(`{"vulnerabilities":{}}`)},
 		"npm install -- axios@1.6.8":                     {output: nil},
-		"composer install --no-scripts --no-interaction": {output: nil},
+		"composer install --no-scripts --no-interaction --ignore-platform-reqs": {output: nil},
 		"composer outdated --format=json --direct":       {output: []byte(`{"installed":[{"name":"monolog/monolog","version":"3.0.0","latest":"3.5.0","latest-status":"semver-safe-update"}]}`)},
 		"composer audit --format=json":                   {output: []byte(`{"advisories":{}}`)},
 		"go mod download":                                 {output: nil},
