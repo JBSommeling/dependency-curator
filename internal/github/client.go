@@ -244,6 +244,14 @@ func (c *Client) UpdatePR(ctx context.Context, owner, repo string, prNumber int,
 	return c.patch(ctx, path, body, nil)
 }
 
+func (c *Client) MergePR(ctx context.Context, owner, repo string, prNumber int, method string) error {
+	path := fmt.Sprintf("/repos/%s/%s/pulls/%d/merge", owner, repo, prNumber)
+	body := map[string]interface{}{
+		"merge_method": method,
+	}
+	return c.put(ctx, path, body, nil)
+}
+
 func (c *Client) AddLabels(ctx context.Context, owner, repo string, prNumber int, labels []string) error {
 	if len(labels) == 0 {
 		return nil
@@ -299,6 +307,14 @@ func (c *Client) post(ctx context.Context, path string, body, result interface{}
 
 func (c *Client) patch(ctx context.Context, path string, body, result interface{}) error {
 	req, err := c.newRequest(ctx, http.MethodPatch, path, body)
+	if err != nil {
+		return err
+	}
+	return c.do(req, result)
+}
+
+func (c *Client) put(ctx context.Context, path string, body, result interface{}) error {
+	req, err := c.newRequest(ctx, http.MethodPut, path, body)
 	if err != nil {
 		return err
 	}

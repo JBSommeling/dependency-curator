@@ -27,6 +27,8 @@ type mockGHClient struct {
 	commitFilesCalled  bool
 	createPRCalled     bool
 	updatePRCalled     bool
+	mergePRCalled      bool
+	mergePRNumber      int
 	lastPRRequest      ghpkg.PRRequest
 }
 
@@ -67,6 +69,11 @@ func (m *mockGHClient) UpdatePR(_ context.Context, _, _ string, _ int, pr ghpkg.
 	return nil
 }
 func (m *mockGHClient) AddLabels(_ context.Context, _, _ string, _ int, _ []string) error {
+	return nil
+}
+func (m *mockGHClient) MergePR(_ context.Context, _, _ string, prNumber int, _ string) error {
+	m.mergePRCalled = true
+	m.mergePRNumber = prNumber
 	return nil
 }
 
@@ -464,6 +471,68 @@ require github.com/pkg/errors v0.9.1
 	}
 	if !strings.Contains(ghMock.lastPRRequest.Body, "Dependency Curator Report") {
 		t.Error("PR body should contain report")
+	}
+}
+
+// TestRunWithDeps_PatchAutoMerge verifies that when a patch update is present
+// and auto_patch is enabled, the patch branch is created, a PR is opened, and
+// MergePR is called (squash merge).
+func TestRunWithDeps_PatchAutoMerge(t *testing.T) {
+	dir := t.TempDir()
+	pkgJSON := `{
+		"name":"test","version":"1.0.0",
+		"dependencies":{"axios":"^1.6.0"}
+	}`
+	if err := os.WriteFile(filepath.Join(dir, "package.json"), []byte(pkgJSON), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "package-lock.json"), []byte(`{"lockfileVersion":3}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	// axios 1.6.0 -> 1.6.8 is a patch update
+	npmOutdated := `{"axios":{"current":"1.6.0","wanted":"1.6.8","latest":"1.6.8"}}`
+
+	ghMock := &mockGHClient{
+		defaultBranch: "main",
+		baseSHA:       "abc123",
+		branchExists:  false,
+		createdPR:     5,
+		createdPRURL:  "https://github.com/test/repo/pull/5",
+		commitSHA:     "def456",
+	}
+
+	runner := &mockCmdRunner{responses: map[string]mockResponse{
+		"npm install --ignore-scripts --no-audit": {output: nil},
+		"npm outdated --json":                     {output: []byte(npmOutdated)},
+		"npm audit --json":                        {output: []byte(`{"vulnerabilities":{}}`)},
+		"npm install axios@1.6.8":                 {output: nil},
+	}}
+
+	cfg := baseCfg(dir)
+	cfg.AutoPatch = true
+	cfg.CreatePR = true
+
+	d := &deps{runner: runner, ghClient: ghMock, httpClient: &mockHTTPClient{}}
+
+	if err := runWithDeps(cfg, d); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !ghMock.createBranchCalled {
+		t.Error("should create patch branch")
+	}
+	if !ghMock.createPRCalled {
+		t.Error("should create patch PR")
+	}
+	patchBranch := cfg.PatchBranch()
+	if !strings.Contains(ghMock.lastPRRequest.Head, patchBranch) {
+		t.Errorf("patch PR head should be patch branch %q, got %q", patchBranch, ghMock.lastPRRequest.Head)
+	}
+	if !ghMock.mergePRCalled {
+		t.Error("should call MergePR to auto-merge the patch PR")
+	}
+	if ghMock.mergePRNumber != 5 {
+		t.Errorf("expected MergePR called with PR #5, got #%d", ghMock.mergePRNumber)
 	}
 }
 

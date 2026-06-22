@@ -79,6 +79,10 @@ func (c *Config) UpdateBranch() string {
 	return "dependency-curator/" + c.ScheduleLabel + "-updates"
 }
 
+func (c *Config) PatchBranch() string {
+	return "dependency-curator/" + c.ScheduleLabel + "-patches"
+}
+
 func getEnv(key, fallback string) string {
 	if v := os.Getenv(key); v != "" {
 		return v

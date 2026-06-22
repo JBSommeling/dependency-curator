@@ -34,6 +34,7 @@ type ghClientInterface interface {
 	CreatePR(ctx context.Context, owner, repo string, pr gh.PRRequest) (string, int, error)
 	UpdatePR(ctx context.Context, owner, repo string, prNumber int, pr gh.PRRequest) error
 	AddLabels(ctx context.Context, owner, repo string, prNumber int, labels []string) error
+	MergePR(ctx context.Context, owner, repo string, prNumber int, method string) error
 }
 
 type deps struct {
@@ -279,63 +280,84 @@ func runWithDeps(cfg *config.Config, d *deps) error {
 	}
 
 	patchesApplied := 0
-	committedToBranch := false
-	updateBranch := cfg.UpdateBranch()
+	var prURL string
+	baseRef := "heads/" + baseBranch
 
-	// Ensure update branch exists
-	needsBranch := (cfg.AutoPatch && len(patchGroups) > 0) || (cfg.CreatePR && len(minorMajor) > 0)
-	if needsBranch {
-		baseSHA, err := d.ghClient.GetRef(ctx, cfg.Owner, cfg.Repo, "heads/"+baseBranch)
+	// Phase 1: auto-merge patch updates via a dedicated branch + immediate squash merge.
+	if cfg.AutoPatch && len(patchGroups) > 0 {
+		patchBranch := cfg.PatchBranch()
+		baseSHA, err := d.ghClient.GetRef(ctx, cfg.Owner, cfg.Repo, baseRef)
 		if err != nil {
 			return fmt.Errorf("getting base ref: %w", err)
 		}
-		if err := d.ghClient.CreateBranch(ctx, cfg.Owner, cfg.Repo, updateBranch, baseSHA); err != nil {
-			exists, existsErr := d.ghClient.BranchExists(ctx, cfg.Owner, cfg.Repo, updateBranch)
-			if existsErr != nil || !exists {
-				return fmt.Errorf("creating update branch %s: %w", updateBranch, err)
-			}
-			if err := d.ghClient.UpdateRef(ctx, cfg.Owner, cfg.Repo, "heads/"+updateBranch, baseSHA); err != nil {
-				return fmt.Errorf("updating branch ref: %w", err)
-			}
-			log.Printf("updated branch %s to %s", updateBranch, baseSHA[:7])
-		} else {
-			log.Printf("created branch %s", updateBranch)
+		if err := ensureBranch(ctx, d, cfg, patchBranch, baseSHA); err != nil {
+			return err
 		}
-	}
 
-	// Apply patches per ecosystem
-	if cfg.AutoPatch {
+		var appliedPatchDeps []dependency.Dependency
+		committedPatches := false
 		for _, pg := range patchGroups {
 			log.Printf("[%s] applying %d patch updates", pg.eco.name, len(pg.patches))
 			applied, applyErr := pg.eco.applyPatches(ctx, cfg.ProjectDir, pg.patches)
 			if applyErr != nil {
 				log.Printf("[%s] warning: some patches failed: %v", pg.eco.name, applyErr)
 			}
-			count := len(applied)
-			if count > 0 {
-				files := make(map[string][]byte)
-				for _, fname := range pg.eco.manifestFiles {
-					path := filepath.Join(cfg.ProjectDir, fname)
-					data, err := os.ReadFile(path)
-					if err != nil {
-						return fmt.Errorf("[%s] reading %s after patch updates: %w", pg.eco.name, fname, err)
-					}
-					files[fname] = data
+			if len(applied) > 0 {
+				files, err := readManifests(cfg.ProjectDir, pg.eco.manifestFiles)
+				if err != nil {
+					return fmt.Errorf("[%s] reading manifests after patch updates: %w", pg.eco.name, err)
 				}
 				msg := fmt.Sprintf("chore(deps): apply %s patch updates", pg.eco.name)
-				_, err := d.ghClient.CommitFiles(ctx, cfg.Owner, cfg.Repo, updateBranch, msg, files)
-				if err != nil {
+				if _, err := d.ghClient.CommitFiles(ctx, cfg.Owner, cfg.Repo, patchBranch, msg, files); err != nil {
 					return fmt.Errorf("[%s] committing patch updates: %w", pg.eco.name, err)
 				}
-				patchesApplied += count
-				committedToBranch = true
-				log.Printf("[%s] committed %d patch updates", pg.eco.name, count)
+				patchesApplied += len(applied)
+				appliedPatchDeps = append(appliedPatchDeps, applied...)
+				committedPatches = true
+				log.Printf("[%s] committed %d patch updates", pg.eco.name, len(applied))
+			}
+		}
+
+		if committedPatches {
+			title := fmt.Sprintf("chore(deps): %s patch updates", cfg.ScheduleLabel)
+			body := reporting.GeneratePRBody(appliedPatchDeps, map[string]*changelog.ChangelogInfo{})
+			prNumber, found, err := d.ghClient.FindOpenPR(ctx, cfg.Owner, cfg.Repo, patchBranch, baseBranch)
+			if err != nil {
+				return fmt.Errorf("finding existing patch PR: %w", err)
+			}
+			if !found {
+				_, num, err := d.ghClient.CreatePR(ctx, cfg.Owner, cfg.Repo, gh.PRRequest{
+					Title: title,
+					Body:  body,
+					Head:  patchBranch,
+					Base:  baseBranch,
+				})
+				if err != nil {
+					return fmt.Errorf("creating patch PR: %w", err)
+				}
+				prNumber = num
+				log.Printf("created patch PR #%d", prNumber)
+			}
+			if err := d.ghClient.MergePR(ctx, cfg.Owner, cfg.Repo, prNumber, "squash"); err != nil {
+				log.Printf("warning: could not auto-merge patch PR #%d (leaving it open for manual merge): %v", prNumber, err)
+			} else {
+				log.Printf("auto-merged patch PR #%d", prNumber)
 			}
 		}
 	}
 
-	// Apply minor/major updates to the branch so the PR has real changes
-	if cfg.CreatePR {
+	// Phase 2: minor/major updates via a review PR, cut from the now-updated base.
+	committedToBranch := false
+	if cfg.CreatePR && len(minorMajor) > 0 {
+		updateBranch := cfg.UpdateBranch()
+		baseSHA, err := d.ghClient.GetRef(ctx, cfg.Owner, cfg.Repo, baseRef)
+		if err != nil {
+			return fmt.Errorf("getting base ref: %w", err)
+		}
+		if err := ensureBranch(ctx, d, cfg, updateBranch, baseSHA); err != nil {
+			return err
+		}
+
 		for _, ug := range updateGroups {
 			log.Printf("[%s] applying %d minor/major updates", ug.eco.name, len(ug.patches))
 			applied, applyErr := ug.eco.applyUpdates(ctx, cfg.ProjectDir, ug.patches)
@@ -343,14 +365,9 @@ func runWithDeps(cfg *config.Config, d *deps) error {
 				log.Printf("[%s] warning: some updates failed: %v", ug.eco.name, applyErr)
 			}
 			if len(applied) > 0 {
-				files := make(map[string][]byte)
-				for _, fname := range ug.eco.manifestFiles {
-					path := filepath.Join(cfg.ProjectDir, fname)
-					data, err := os.ReadFile(path)
-					if err != nil {
-						return fmt.Errorf("[%s] reading %s after minor/major updates: %w", ug.eco.name, fname, err)
-					}
-					files[fname] = data
+				files, err := readManifests(cfg.ProjectDir, ug.eco.manifestFiles)
+				if err != nil {
+					return fmt.Errorf("[%s] reading manifests after minor/major updates: %w", ug.eco.name, err)
 				}
 				msg := fmt.Sprintf("chore(deps): apply %s minor/major updates", ug.eco.name)
 				if _, err := d.ghClient.CommitFiles(ctx, cfg.Owner, cfg.Repo, updateBranch, msg, files); err != nil {
@@ -360,11 +377,7 @@ func runWithDeps(cfg *config.Config, d *deps) error {
 				log.Printf("[%s] committed %d minor/major updates", ug.eco.name, len(applied))
 			}
 		}
-	}
 
-	// Create/update PR for minor+major
-	var prURL string
-	if cfg.CreatePR && len(minorMajor) > 0 {
 		if !committedToBranch {
 			log.Printf("no changes committed to branch %s, skipping PR creation", updateBranch)
 		} else {
@@ -432,6 +445,34 @@ func runWithDeps(cfg *config.Config, d *deps) error {
 
 	log.Println("dependency curator completed successfully")
 	return nil
+}
+
+func ensureBranch(ctx context.Context, d *deps, cfg *config.Config, branch, baseSHA string) error {
+	if err := d.ghClient.CreateBranch(ctx, cfg.Owner, cfg.Repo, branch, baseSHA); err != nil {
+		exists, existsErr := d.ghClient.BranchExists(ctx, cfg.Owner, cfg.Repo, branch)
+		if existsErr != nil || !exists {
+			return fmt.Errorf("creating branch %s: %w", branch, err)
+		}
+		if err := d.ghClient.UpdateRef(ctx, cfg.Owner, cfg.Repo, "heads/"+branch, baseSHA); err != nil {
+			return fmt.Errorf("updating branch ref %s: %w", branch, err)
+		}
+		log.Printf("reset branch %s to %s", branch, baseSHA[:7])
+	} else {
+		log.Printf("created branch %s", branch)
+	}
+	return nil
+}
+
+func readManifests(dir string, names []string) (map[string][]byte, error) {
+	files := make(map[string][]byte)
+	for _, fname := range names {
+		data, err := os.ReadFile(filepath.Join(dir, fname))
+		if err != nil {
+			return nil, fmt.Errorf("reading %s: %w", fname, err)
+		}
+		files[fname] = data
+	}
+	return files, nil
 }
 
 func isNpmPackage(name string) bool {
