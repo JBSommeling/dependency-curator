@@ -68,7 +68,7 @@ func (c *Client) BranchExists(ctx context.Context, owner, repo, branch string) (
 		return false, err
 	}
 	defer resp.Body.Close()
-	io.Copy(io.Discard, resp.Body)
+	_, _ = io.Copy(io.Discard, resp.Body)
 
 	if resp.StatusCode == http.StatusNotFound {
 		return false, nil

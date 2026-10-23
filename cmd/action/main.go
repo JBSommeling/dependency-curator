@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"net/http"
@@ -493,14 +495,19 @@ func setOutput(name, value string) {
 		log.Printf("warning: GITHUB_OUTPUT not set, output %s=%s not written", name, value)
 		return
 	}
-	f, err := os.OpenFile(outputFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	// Random per-call delimiter prevents values from injecting extra outputs
+	delimiterSuffix := make([]byte, 16)
+	if _, err := rand.Read(delimiterSuffix); err != nil {
+		log.Printf("warning: could not generate delimiter for output %s: %v", name, err)
+		return
+	}
+	delimiter := "ghadelimiter_" + hex.EncodeToString(delimiterSuffix)
+	f, err := os.OpenFile(outputFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
 		log.Printf("warning: could not write output %s: %v", name, err)
 		return
 	}
 	defer f.Close()
-	// Use delimiter for multi-line safety
-	delimiter := "EOF_DEPENDENCY_CURATOR"
 	fmt.Fprintf(f, "%s<<%s\n%s\n%s\n", name, delimiter, value, delimiter)
 }
 
@@ -509,7 +516,7 @@ func writeSummary(content string) {
 	if summaryFile == "" {
 		return
 	}
-	f, err := os.OpenFile(summaryFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	f, err := os.OpenFile(summaryFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
 		log.Printf("warning: could not write summary: %v", err)
 		return

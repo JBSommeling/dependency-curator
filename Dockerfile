@@ -1,4 +1,4 @@
-FROM golang:1.24-alpine AS builder
+FROM golang:1.26.10-alpine AS builder
 
 WORKDIR /build
 COPY go.mod go.sum* ./
@@ -14,7 +14,7 @@ RUN apk add --no-cache php83 php83-phar php83-mbstring php83-openssl php83-curl 
 ENV GOPATH=/root/go
 ENV PATH=$GOPATH/bin:$PATH
 
-RUN go install golang.org/x/vuln/cmd/govulncheck@latest
+RUN go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
 
 COPY --from=builder /dependency-curator /usr/local/bin/dependency-curator
 
