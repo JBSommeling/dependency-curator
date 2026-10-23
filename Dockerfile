@@ -8,7 +8,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -o /dependency-curator ./cmd/act
 
 FROM node:22-alpine
 
-RUN apk add --no-cache php83 php83-phar php83-mbstring php83-openssl php83-curl php83-json php83-iconv php83-zip php83-tokenizer php83-xmlwriter php83-xml php83-dom php83-simplexml composer go \
+RUN apk add --no-cache php83 php83-phar php83-mbstring php83-openssl php83-curl php83-json php83-iconv php83-zip php83-tokenizer php83-xmlwriter php83-xml php83-dom php83-simplexml go \
     && ln -sf /usr/bin/php83 /usr/bin/php
 
 ENV GOPATH=/root/go
@@ -20,6 +20,8 @@ ENV COMPOSER_POLICY_ADVISORIES_BLOCK=0
 
 RUN go install golang.org/x/vuln/cmd/govulncheck@v1.9.0
 
+# Pin Composer and run it on the image's PHP.
+COPY --from=composer:2.10.3 /usr/bin/composer /usr/bin/composer
 COPY --from=builder /dependency-curator /usr/local/bin/dependency-curator
 
 ENTRYPOINT ["dependency-curator"]

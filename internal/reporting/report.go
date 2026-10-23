@@ -164,6 +164,13 @@ func GeneratePRBody(deps []dependency.Dependency, changelogs map[string]*changel
 }
 
 func GenerateSummary(deps []dependency.Dependency, patchesApplied int) string {
+	directVulnCount := BuildReport(deps, nil).VulnCount
+	return GenerateSummaryWithAdvisoryTotal(deps, patchesApplied, directVulnCount)
+}
+
+// GenerateSummaryWithAdvisoryTotal renders the summary using totalAdvisories (including
+// transitive ones) as the vulnerability count, noting the direct-dependency share if lower.
+func GenerateSummaryWithAdvisoryTotal(deps []dependency.Dependency, patchesApplied int, totalAdvisories int) string {
 	report := BuildReport(deps, nil)
 	var b strings.Builder
 
@@ -177,8 +184,12 @@ func GenerateSummary(deps []dependency.Dependency, patchesApplied int) string {
 	if report.MajorCount > 0 {
 		b.WriteString(fmt.Sprintf("- **%d** major updates available\n", report.MajorCount))
 	}
-	if report.VulnCount > 0 {
-		b.WriteString(fmt.Sprintf("- **%d** vulnerabilities found\n", report.VulnCount))
+	if totalAdvisories > 0 {
+		b.WriteString(fmt.Sprintf("- **%d** vulnerabilities found", totalAdvisories))
+		if report.VulnCount != totalAdvisories {
+			b.WriteString(fmt.Sprintf(" (%d in direct dependencies)", report.VulnCount))
+		}
+		b.WriteString("\n")
 	}
 	if patchesApplied == 0 && report.MinorCount == 0 && report.MajorCount == 0 {
 		b.WriteString("All dependencies are up to date.\n")

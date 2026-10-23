@@ -459,7 +459,7 @@ func runWithDeps(cfg *config.Config, d *deps) error {
 		setOutput("pr_url", prURL)
 	}
 
-	summary := reporting.GenerateSummary(allDeps, patchesApplied)
+	summary := reporting.GenerateSummaryWithAdvisoryTotal(allDeps, patchesApplied, len(allAdvisories))
 	writeSummary(summary)
 
 	log.Println("dependency curator completed successfully")
