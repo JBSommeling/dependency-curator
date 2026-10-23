@@ -145,6 +145,7 @@ func detectEcosystems(projectDir string, runner exec.CommandRunner, includeDev b
 	}
 
 	if fileExists(filepath.Join(projectDir, "go.mod")) {
+		ignoreNonGoVendorDir(projectDir)
 		goScanner := gomod.NewScanner(runner)
 		goSecurity := gomod.NewVulnScanner(runner)
 		goUpdater := gomod.NewUpdater(runner)
@@ -169,6 +170,22 @@ func detectEcosystems(projectDir string, runner exec.CommandRunner, includeDev b
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+// ignoreNonGoVendorDir keeps Go out of vendor mode when a non-Go vendor dir
+// (e.g. Composer's) exists, which would otherwise break every go command.
+func ignoreNonGoVendorDir(projectDir string) {
+	if fileExists(filepath.Join(projectDir, "vendor", "modules.txt")) {
+		return
+	}
+	existingFlags := os.Getenv("GOFLAGS")
+	if strings.Contains(existingFlags, "-mod=") {
+		return
+	}
+	updatedFlags := strings.TrimSpace(existingFlags + " -mod=readonly")
+	if err := os.Setenv("GOFLAGS", updatedFlags); err != nil {
+		log.Printf("warning: could not set GOFLAGS: %v", err)
+	}
 }
 
 func runWithDeps(cfg *config.Config, d *deps) error {
