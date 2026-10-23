@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"log"
 	"net/http"
@@ -143,6 +145,7 @@ func detectEcosystems(projectDir string, runner exec.CommandRunner, includeDev b
 	}
 
 	if fileExists(filepath.Join(projectDir, "go.mod")) {
+		ignoreNonGoVendorDir(projectDir)
 		goScanner := gomod.NewScanner(runner)
 		goSecurity := gomod.NewVulnScanner(runner)
 		goUpdater := gomod.NewUpdater(runner)
@@ -167,6 +170,22 @@ func detectEcosystems(projectDir string, runner exec.CommandRunner, includeDev b
 func fileExists(path string) bool {
 	_, err := os.Stat(path)
 	return err == nil
+}
+
+// ignoreNonGoVendorDir keeps Go out of vendor mode when a non-Go vendor dir
+// (e.g. Composer's) exists, which would otherwise break every go command.
+func ignoreNonGoVendorDir(projectDir string) {
+	if fileExists(filepath.Join(projectDir, "vendor", "modules.txt")) {
+		return
+	}
+	existingFlags := os.Getenv("GOFLAGS")
+	if strings.Contains(existingFlags, "-mod=") {
+		return
+	}
+	updatedFlags := strings.TrimSpace(existingFlags + " -mod=readonly")
+	if err := os.Setenv("GOFLAGS", updatedFlags); err != nil {
+		log.Printf("warning: could not set GOFLAGS: %v", err)
+	}
 }
 
 func runWithDeps(cfg *config.Config, d *deps) error {
@@ -440,7 +459,7 @@ func runWithDeps(cfg *config.Config, d *deps) error {
 		setOutput("pr_url", prURL)
 	}
 
-	summary := reporting.GenerateSummary(allDeps, patchesApplied)
+	summary := reporting.GenerateSummaryWithAdvisoryTotal(allDeps, patchesApplied, len(allAdvisories))
 	writeSummary(summary)
 
 	log.Println("dependency curator completed successfully")
@@ -493,14 +512,19 @@ func setOutput(name, value string) {
 		log.Printf("warning: GITHUB_OUTPUT not set, output %s=%s not written", name, value)
 		return
 	}
-	f, err := os.OpenFile(outputFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	// Random per-call delimiter prevents values from injecting extra outputs
+	delimiterSuffix := make([]byte, 16)
+	if _, err := rand.Read(delimiterSuffix); err != nil {
+		log.Printf("warning: could not generate delimiter for output %s: %v", name, err)
+		return
+	}
+	delimiter := "ghadelimiter_" + hex.EncodeToString(delimiterSuffix)
+	f, err := os.OpenFile(outputFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
 		log.Printf("warning: could not write output %s: %v", name, err)
 		return
 	}
 	defer f.Close()
-	// Use delimiter for multi-line safety
-	delimiter := "EOF_DEPENDENCY_CURATOR"
 	fmt.Fprintf(f, "%s<<%s\n%s\n%s\n", name, delimiter, value, delimiter)
 }
 
@@ -509,7 +533,7 @@ func writeSummary(content string) {
 	if summaryFile == "" {
 		return
 	}
-	f, err := os.OpenFile(summaryFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	f, err := os.OpenFile(summaryFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
 	if err != nil {
 		log.Printf("warning: could not write summary: %v", err)
 		return
