@@ -89,7 +89,7 @@ The generated PR includes:
 |--------|-------------|
 | `patches_applied` | Number of patch updates applied |
 | `updates_available` | Number of minor/major updates available |
-| `vulnerabilities_found` | Number of vulnerabilities found |
+| `vulnerabilities_found` | Number of vulnerabilities found, including those in transitive dependencies |
 | `pr_url` | URL of the created/updated PR |
 
 ## Permissions

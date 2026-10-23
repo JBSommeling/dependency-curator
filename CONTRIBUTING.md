@@ -6,7 +6,7 @@ Thank you for your interest in contributing!
 
 ### Prerequisites
 
-- Go 1.24+
+- Go 1.26.10+
 - Docker (for building the action image)
 - Node.js 22+ and npm (for npm ecosystem testing)
 - PHP 8.3+ and Composer (for Composer ecosystem testing)
